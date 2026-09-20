@@ -126,23 +126,80 @@ QPushButton#primaryBtn:hover {
 # CUSTOM WIDGETS
 # ==========================================
 
+class DraggableText(QLabel):
+    """A floating, draggable label for Text tools."""
+    def __init__(self, parent, text, pdf_x, pdf_y, editor):
+        super().__init__(parent)
+        self.editor = editor
+        self.text_content = text
+        
+        # Coordinates relative to the original unscaled PDF dimensions
+        self.pdf_x = pdf_x
+        self.pdf_y = pdf_y
+        self.base_font_size = 12
+        
+        self.setText(text)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setToolTip("Drag to move\nClick outside to Apply\nRight-Click to Cancel")
+        
+        self.setStyleSheet("border: 2px dashed #1877f2; background-color: rgba(24, 119, 242, 20); color: black; padding: 2px;")
+        
+        self.drag_start_pos = None
+        self.show()
+        self.update_zoom(self.editor.zoom_factor)
+
+    def update_zoom(self, zoom):
+        current_font_size = max(1, int(self.base_font_size * zoom))
+        font = QFont("Arial", current_font_size)
+        self.setFont(font)
+        self.adjustSize() # Auto-scale the label box to fit the new text size
+        
+        new_x = int(self.pdf_x * zoom)
+        new_y = int(self.pdf_y * zoom)
+        self.move(new_x, new_y)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.drag_start_pos = event.pos()
+        elif event.button() == Qt.MouseButton.RightButton:
+            if self in self.editor.floating_elements:
+                self.editor.floating_elements.remove(self)
+            self.deleteLater()
+
+    def mouseMoveEvent(self, event):
+        if self.drag_start_pos is not None:
+            delta = event.pos() - self.drag_start_pos
+            self.move(self.pos() + delta)
+            
+            # Update PDF top-left coordinates based on visual movement
+            self.pdf_x = self.x() / self.editor.zoom_factor
+            self.pdf_y = self.y() / self.editor.zoom_factor
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.drag_start_pos = None
+
+    def mouseDoubleClickEvent(self, event):
+        self.editor.commit_single_element(self)
+
+
 class DraggableSignature(QLabel):
-    """A floating, draggable label that represents a signature before it's saved to the PDF."""
+    """A floating, draggable label for Signature image tools."""
     def __init__(self, parent, file_path, pdf_x, pdf_y, editor):
         super().__init__(parent)
         self.editor = editor
         self.file_path = file_path
         
-        # Center coordinates relative to the original unscaled PDF dimensions
         self.pdf_x = pdf_x
         self.pdf_y = pdf_y
         
         self.original_pixmap = QPixmap(file_path)
         
         self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setToolTip("Drag to move\nDouble-Click to Apply\nRight-Click to Cancel")
+        self.setToolTip("Drag to move\nClick outside to Apply\nRight-Click to Cancel")
         
-        # Visual feedback so the user knows it's a floating object
         self.setStyleSheet("border: 2px dashed #1877f2; background-color: rgba(24, 119, 242, 20);")
         
         self.drag_start_pos = None
@@ -150,7 +207,6 @@ class DraggableSignature(QLabel):
         self.update_zoom(self.editor.zoom_factor)
 
     def update_zoom(self, zoom):
-        """Resizes and repositions the widget when the document is zoomed in/out."""
         new_w = int(120 * zoom)
         new_h = int(60 * zoom)
         self.setFixedSize(new_w, new_h)
@@ -172,18 +228,15 @@ class DraggableSignature(QLabel):
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             self.drag_start_pos = event.pos()
         elif event.button() == Qt.MouseButton.RightButton:
-            # Right-click cancels the signature
-            if self in self.editor.floating_signatures:
-                self.editor.floating_signatures.remove(self)
+            if self in self.editor.floating_elements:
+                self.editor.floating_elements.remove(self)
             self.deleteLater()
 
     def mouseMoveEvent(self, event):
         if self.drag_start_pos is not None:
-            # Move the widget visually
             delta = event.pos() - self.drag_start_pos
             self.move(self.pos() + delta)
             
-            # Update the underlying PDF coordinates so it stays in place if zoomed
             self.pdf_x = (self.x() + self.width() / 2) / self.editor.zoom_factor
             self.pdf_y = (self.y() + self.height() / 2) / self.editor.zoom_factor
 
@@ -193,8 +246,7 @@ class DraggableSignature(QLabel):
             self.drag_start_pos = None
 
     def mouseDoubleClickEvent(self, event):
-        """Double clicking a floating signature permanently applies it."""
-        self.editor.commit_single_signature(self)
+        self.editor.commit_single_element(self)
 
 
 class DrawCanvas(QLabel):
@@ -307,16 +359,14 @@ class SignaturePad(QDialog):
         self.type_label.setPixmap(self.type_canvas)
 
     def save_signature(self):
-        # Create a guaranteed unique temporary file for EVERY signature so they don't overwrite each other
         fd, self.signature_file_path = tempfile.mkstemp(suffix=".png")
-        os.close(fd) # Close file descriptor, we just need the path
+        os.close(fd) 
         
         if self.tabs.currentIndex() == 0:
             self.draw_canvas.canvas.save(self.signature_file_path, "PNG")
         else:
             self.type_canvas.save(self.signature_file_path, "PNG")
             
-        # Register the file with the main editor so it can be deleted on exit
         if self.editor:
             self.editor.temp_files.append(self.signature_file_path)
             
@@ -331,6 +381,12 @@ class PDFLabel(QLabel):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            # Commit ANY floating items (text or signatures) if we click outside of them
+            if self.editor.floating_elements:
+                self.editor.apply_all_floating_elements()
+                self.editor.show_page()
+                return
+                
             if self.editor.text_tool_active or self.editor.signature_tool_active:
                 self.editor.handle_click(event.pos().x(), event.pos().y())
 
@@ -345,7 +401,6 @@ class PDFEditor(QMainWindow):
         self.setWindowTitle("Pro Python PDF Editor")
         self.setGeometry(100, 100, 900, 1000)
         
-        # State variables
         self.doc = None
         self.current_page = 0
         self.zoom_factor = 1.0 
@@ -353,14 +408,13 @@ class PDFEditor(QMainWindow):
         self.signature_tool_active = False
         self.signature_file_path = None
         
-        self.floating_signatures = [] # Tracks currently dragged signatures
-        self.temp_files = [] # Tracks all created temp image files for cleanup
+        # Combined array for both floating Text and Signatures
+        self.floating_elements = [] 
+        self.temp_files = [] 
         
-        # UNDO State Variables
         self.undo_stack = []
         self.MAX_UNDO_STEPS = 5
         
-        # UI Setup
         self.scroll_area = QScrollArea()
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
@@ -375,7 +429,6 @@ class PDFEditor(QMainWindow):
         self.image_label.setGraphicsEffect(shadow)
         self.image_label.hide() 
         
-        # Toolbar Setup
         toolbar = QToolBar("Main Toolbar")
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
@@ -419,11 +472,17 @@ class PDFEditor(QMainWindow):
         
         save_action = toolbar.addAction("💾 Save As")
         save_action.triggered.connect(self.save_pdf)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.floating_elements:
+            self.apply_all_floating_elements()
+            self.show_page()
+        super().mousePressEvent(event)
         
     def open_pdf(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if file_name:
-            self.clear_floating_signatures() # Erase any unsaved floats from previous doc
+            self.clear_floating_elements()
             self.doc = pymupdf.open(file_name)
             self.current_page = 0
             self.zoom_factor = 1.0 
@@ -446,20 +505,19 @@ class PDFEditor(QMainWindow):
             self.image_label.setPixmap(pixmap)
             self.image_label.resize(pixmap.width(), pixmap.height())
             
-            # Ensure any floating signatures update their scaling to match the document
-            for sig in self.floating_signatures:
-                sig.update_zoom(self.zoom_factor)
-                sig.raise_() # Make sure they sit on top of the PDF
+            for el in self.floating_elements:
+                el.update_zoom(self.zoom_factor)
+                el.raise_() 
 
     def prev_page(self):
         if self.doc and self.current_page > 0:
-            self.apply_all_floating_signatures() # Auto-commit before page turn
+            self.apply_all_floating_elements() 
             self.current_page -= 1
             self.show_page()
 
     def next_page(self):
         if self.doc and self.current_page < len(self.doc) - 1:
-            self.apply_all_floating_signatures() # Auto-commit before page turn
+            self.apply_all_floating_elements() 
             self.current_page += 1
             self.show_page()
             
@@ -527,85 +585,88 @@ class PDFEditor(QMainWindow):
             if not self.undo_stack:
                 self.undo_action.setEnabled(False)
 
-    def commit_single_signature(self, sig_widget):
-        """Burns a single floating signature into the PDF."""
+    def commit_single_element(self, widget):
         self.save_state_for_undo()
         page = self.doc[self.current_page]
         
-        # Calculate bounding box
-        rect = pymupdf.Rect(sig_widget.pdf_x - 60, sig_widget.pdf_y - 30, 
-                            sig_widget.pdf_x + 60, sig_widget.pdf_y + 30)
-                            
-        page.insert_image(rect, filename=sig_widget.file_path)
+        if isinstance(widget, DraggableSignature):
+            rect = pymupdf.Rect(widget.pdf_x - 60, widget.pdf_y - 30, 
+                                widget.pdf_x + 60, widget.pdf_y + 30)
+            page.insert_image(rect, filename=widget.file_path)
+            
+        elif isinstance(widget, DraggableText):
+            # Baseline estimation (adds font size to Top-Left Y coordinate)
+            point = pymupdf.Point(widget.pdf_x, widget.pdf_y + widget.base_font_size)
+            page.insert_text(point, widget.text_content, fontsize=widget.base_font_size, color=(0, 0, 0), fontname="helv")
         
-        # Clean up widget
-        if sig_widget in self.floating_signatures:
-            self.floating_signatures.remove(sig_widget)
-        sig_widget.deleteLater()
+        if widget in self.floating_elements:
+            self.floating_elements.remove(widget)
+        widget.deleteLater()
         
         self.show_page()
 
-    def apply_all_floating_signatures(self):
-        """Burns ALL active floating signatures into the PDF."""
-        if not self.floating_signatures:
+    def apply_all_floating_elements(self):
+        if not self.floating_elements:
             return
             
         self.save_state_for_undo()
         page = self.doc[self.current_page]
         
-        for sig_widget in self.floating_signatures:
-            rect = pymupdf.Rect(sig_widget.pdf_x - 60, sig_widget.pdf_y - 30, 
-                                sig_widget.pdf_x + 60, sig_widget.pdf_y + 30)
-            page.insert_image(rect, filename=sig_widget.file_path)
-            sig_widget.deleteLater()
+        for widget in self.floating_elements:
+            if isinstance(widget, DraggableSignature):
+                rect = pymupdf.Rect(widget.pdf_x - 60, widget.pdf_y - 30, 
+                                    widget.pdf_x + 60, widget.pdf_y + 30)
+                page.insert_image(rect, filename=widget.file_path)
+                
+            elif isinstance(widget, DraggableText):
+                point = pymupdf.Point(widget.pdf_x, widget.pdf_y + widget.base_font_size)
+                page.insert_text(point, widget.text_content, fontsize=widget.base_font_size, color=(0, 0, 0), fontname="helv")
+                
+            widget.deleteLater()
             
-        self.floating_signatures.clear()
-        # We purposely don't call show_page() here because the function calling this (like zoom/page turn) will do it.
+        self.floating_elements.clear()
 
-    def clear_floating_signatures(self):
-        """Deletes floats without saving them (used when opening a brand new PDF)."""
-        for sig in self.floating_signatures:
-            sig.deleteLater()
-        self.floating_signatures.clear()
+    def clear_floating_elements(self):
+        for el in self.floating_elements:
+            el.deleteLater()
+        self.floating_elements.clear()
 
     def handle_click(self, x, y):
         if not self.doc:
             return
 
-        page = self.doc[self.current_page]
         pdf_x = x / self.zoom_factor
         pdf_y = y / self.zoom_factor
 
         if self.text_tool_active:
             text, ok = QInputDialog.getText(self, "Input Text", "Enter text to insert:")
             if ok and text:
-                self.save_state_for_undo()
-                page.insert_text(pymupdf.Point(pdf_x, pdf_y), text, fontsize=12, color=(0, 0, 0))
-                self.show_page()
+                # Spawn draggable text widget instead of burning instantly
+                text_widget = DraggableText(self.image_label, text, pdf_x, pdf_y, self)
+                self.floating_elements.append(text_widget)
+                
                 self.text_action.setChecked(False)
-                self.toggle_text_tool(False)
+                self.text_tool_active = False
+                self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
                 
         elif self.signature_tool_active and self.signature_file_path:
-            # Spawn a draggable widget instead of burning it immediately
             sig_widget = DraggableSignature(self.image_label, self.signature_file_path, pdf_x, pdf_y, self)
-            self.floating_signatures.append(sig_widget)
+            self.floating_elements.append(sig_widget)
             
-            # Deactivate tool immediately so user can safely click and drag the new element
             self.sign_action.setChecked(False)
             self.signature_tool_active = False
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def save_pdf(self):
         if self.doc:
-            self.apply_all_floating_signatures() # Burn everything before saving!
-            self.show_page() # Refresh visual
+            self.apply_all_floating_elements()
+            self.show_page()
             
             file_name, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
             if file_name:
                 self.doc.save(file_name)
 
     def closeEvent(self, event):
-        """Clean up all temporary signature files that were generated during the session."""
         for temp_file in self.temp_files:
             try:
                 if os.path.exists(temp_file):
