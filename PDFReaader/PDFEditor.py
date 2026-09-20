@@ -4,17 +4,13 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QScrollArea, QFil
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt
 
-# 1. Create a custom QLabel to capture mouse clicks
 class PDFLabel(QLabel):
     def __init__(self, parent_editor):
         super().__init__()
-        self.editor = parent_editor # Reference back to the main window
+        self.editor = parent_editor
 
-    # Override the mousePressEvent
     def mousePressEvent(self, event):
-        # Only process clicks if the left button is clicked AND the text tool is active
         if event.button() == Qt.MouseButton.LeftButton and self.editor.text_tool_active:
-            # Pass the click coordinates to the editor
             self.editor.handle_click(event.pos().x(), event.pos().y())
 
 class PDFEditor(QMainWindow):
@@ -23,43 +19,44 @@ class PDFEditor(QMainWindow):
         self.setWindowTitle("Python PDF Editor")
         self.setGeometry(100, 100, 800, 1000)
         
-        # State variables
+        # --- NEW: Zoom State Variable ---
+        self.zoom_factor = 1.0  # 1.0 means 100% scale
+        
         self.doc = None
         self.current_page = 0
-        self.text_tool_active = False # Tracks if we are in "typing mode"
+        self.text_tool_active = False
         
-        # Setup the main viewing area
         self.scroll_area = QScrollArea()
-        # Use our custom PDFLabel instead of a standard QLabel
         self.image_label = PDFLabel(self) 
         self.scroll_area.setWidget(self.image_label)
         self.setCentralWidget(self.scroll_area)
         
-        # Setup the Toolbar
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
         
-        # Open
-        open_action = toolbar.addAction("Open PDF")
+        open_action = toolbar.addAction("Open")
         open_action.triggered.connect(self.open_pdf)
         toolbar.addSeparator()
         
-        # Navigation
-        prev_action = toolbar.addAction("Previous Page")
+        prev_action = toolbar.addAction("Previous")
         prev_action.triggered.connect(self.prev_page)
-        next_action = toolbar.addAction("Next Page")
+        next_action = toolbar.addAction("Next")
         next_action.triggered.connect(self.next_page)
         toolbar.addSeparator()
         
-        # --- NEW: Text Tool Button ---
-        # Make it checkable so it acts like a toggle (on/off)
+        # --- NEW: Zoom Buttons ---
+        zoom_in_action = toolbar.addAction("Zoom In")
+        zoom_in_action.triggered.connect(self.zoom_in)
+        
+        zoom_out_action = toolbar.addAction("Zoom Out")
+        zoom_out_action.triggered.connect(self.zoom_out)
+        toolbar.addSeparator()
+        
         self.text_action = toolbar.addAction("Text Tool")
         self.text_action.setCheckable(True) 
         self.text_action.triggered.connect(self.toggle_text_tool)
-        
         toolbar.addSeparator()
         
-        # Save
         save_action = toolbar.addAction("Save As")
         save_action.triggered.connect(self.save_pdf)
         
@@ -68,12 +65,17 @@ class PDFEditor(QMainWindow):
         if file_name:
             self.doc = pymupdf.open(file_name)
             self.current_page = 0
+            self.zoom_factor = 1.0 # Reset zoom when opening a new file
             self.show_page()
             
     def show_page(self):
         if self.doc:
             page = self.doc[self.current_page]
-            pix = page.get_pixmap()
+            
+            # --- NEW: Apply the zoom matrix ---
+            mat = pymupdf.Matrix(self.zoom_factor, self.zoom_factor)
+            pix = page.get_pixmap(matrix=mat)
+            
             qimage = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
             self.image_label.setPixmap(pixmap)
@@ -89,42 +91,49 @@ class PDFEditor(QMainWindow):
             self.current_page += 1
             self.show_page()
             
-    # --- NEW FEATURE LOGIC ---
+    # --- NEW: Zoom Logic ---
+    def zoom_in(self):
+        if self.doc:
+            self.zoom_factor *= 1.2  # Increase size by 20%
+            self.show_page()
+
+    def zoom_out(self):
+        if self.doc:
+            self.zoom_factor /= 1.2  # Decrease size by 20%
+            self.show_page()
     
     def toggle_text_tool(self, checked):
-        # Update our state variable based on the button's checked state
         self.text_tool_active = checked
         if checked:
-            # Change the cursor to indicate we are in typing mode
             self.image_label.setCursor(Qt.CursorShape.IBeamCursor)
         else:
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def handle_click(self, x, y):
-        """Called by the custom PDFLabel when the user clicks the image."""
         if not self.doc:
             return
 
-        # 1. Prompt the user for what text they want to type
         text, ok = QInputDialog.getText(self, "Input Text", "Enter text to insert:")
         
         if ok and text:
             page = self.doc[self.current_page]
             
-            # 2. Insert the text using PyMuPDF coordinates (Points)
-            # In this unzoomed MVP, 1 screen pixel = 1 PDF point, 
-            # so we can use the x and y directly.
+            # --- NEW: Coordinate Translation Math ---
+            # Convert the screen pixel click to the actual PDF document point
+            pdf_x = x / self.zoom_factor
+            pdf_y = y / self.zoom_factor
+            
+            # Note: We also scale the font size slightly based on zoom so 
+            # it doesn't look massive when typed while zoomed out.
+            # You can keep this static (e.g., 12) if you prefer absolute font sizes.
             page.insert_text(
-                pymupdf.Point(x, y), 
+                pymupdf.Point(pdf_x, pdf_y), 
                 text, 
                 fontsize=12, 
-                color=(0, 0, 0) # Black text
+                color=(0, 0, 0)
             )
             
-            # 3. Refresh to see the new text
             self.show_page()
-            
-            # 4. (Optional) Turn the tool off after one use
             self.text_action.setChecked(False)
             self.toggle_text_tool(False)
             
