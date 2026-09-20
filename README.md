@@ -21,6 +21,7 @@ To run this application, you need **Python 3.8 or newer** installed on your comp
 1. Go to the official Python download page: [python.org/downloads](https://www.python.org/downloads/)
 2. Download the latest Windows installer.
 3. Run the installer. **CRITICAL:** Check the box at the bottom that says **"Add Python to PATH"** before clicking "Install Now".
+4. Run the following commands "pip install PyQt6 pymupdf", may require python3 pip to install.
 
 **For macOS:**
 1. Download the macOS installer from [python.org/downloads](https://www.python.org/downloads/) OR use Homebrew:
