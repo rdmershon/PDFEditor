@@ -1,67 +1,28 @@
-Python PDF Editor 📄🖋️
+# Pro Python PDF Editor
 
-A lightweight, desktop-based PDF viewer and editor built with Python. This application uses PyQt6 for a modern graphical user interface and PyMuPDF for high-performance PDF rendering and manipulation.
+A lightweight, modern desktop application for viewing, annotating, and signing PDF documents. Built with Python, PyQt6, and PyMuPDF.
 
-Features
+## Features
+* **Modern UI:** Clean, dark-mode document viewer with a flat-design toolbar and drop-shadows.
+* **Text Tool:** Type custom text and drag it anywhere on the page before applying.
+* **Signature Pad:** Draw your signature with a mouse/stylus or type it using a cursive font.
+* **Draggable Elements:** Text and signatures float on the page allowing you to drag them into the perfect position before committing them to the document.
+* **Undo System:** Made a mistake? Press `Ctrl+Z` (or `Cmd+Z`) or click the Undo button to revert your last action.
 
-Currently, the application supports the following functionality:
+---
 
-View PDFs: Open and display PDF documents.
+## Prerequisites
 
-Page Navigation: Move between pages using "Next Page" and "Previous Page" controls.
+To run this application, you need **Python 3.8 or newer** installed on your computer.
 
-Add Watermarks: Insert text (e.g., "CONFIDENTIAL") directly onto the current PDF page.
+### 1. Installing Python
 
-Save Modifications: Save the edited document to a new file using a "Save As" dialogue.
+**For Windows:**
+1. Go to the official Python download page: [python.org/downloads](https://www.python.org/downloads/)
+2. Download the latest Windows installer.
+3. Run the installer. **CRITICAL:** Check the box at the bottom that says **"Add Python to PATH"** before clicking "Install Now".
 
-Prerequisites
-
-To run this project, you will need Python 3 installed on your machine. The application relies on two external libraries:
-
-PyQt6: For the desktop window, toolbars, and UI components.
-
-pymupdf: For reading, modifying, and rendering the PDF files.
-
-Installation
-
-Clone or Download the Repository:
-Download the project files to your local machine.
-
-Install the Required Libraries:
-Open your terminal or command prompt and run the following command:
-
-pip install pymupdf PyQt6
-
-
-Note for Windows Users: If you see a warning stating that the scripts are installed in a directory that is not on your PATH (e.g., C:\Users\<YourUser>\AppData\Local\Python\...\Scripts), you will need to add that specific directory path to your Windows Environment Variables for PyQt6 to function correctly.
-
-Usage
-
-To start the application, navigate to the folder containing your script in the terminal and run:
-
-python main.py 
-
-
-(Replace main.py with the actual name of your Python file).
-
-How to Edit a PDF
-
-Click Open PDF in the toolbar and select a file.
-
-Navigate to the page you want to edit using Next Page or Previous Page.
-
-Click Add Watermark to stamp the page. (Currently configured to add red text at the top left).
-
-Click Save As to export your modified document.
-
-Next Steps / Roadmap
-
-Future updates to this project could include:
-
-Interactive click-to-type text insertion.
-
-Zoom In / Zoom Out functionality.
-
-Text highlighting tools.
-
-A sidebar with page thumbnails.
+**For macOS:**
+1. Download the macOS installer from [python.org/downloads](https://www.python.org/downloads/) OR use Homebrew:
+   ```bash
+   brew install python
