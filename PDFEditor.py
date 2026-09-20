@@ -4,10 +4,123 @@ import tempfile
 import pymupdf
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QLabel, QScrollArea, 
                              QFileDialog, QToolBar, QInputDialog, QDialog, 
-                             QVBoxLayout, QPushButton, QHBoxLayout, QTabWidget,
-                             QWidget, QLineEdit)
+                             QVBoxLayout, QPushButton, QTabWidget,
+                             QWidget, QLineEdit, QGraphicsDropShadowEffect,
+                             QSpacerItem, QSizePolicy)
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QFont, QColor
 from PyQt6.QtCore import Qt
+
+# ==========================================
+# MODERN STYLESHEET (QSS)
+# ==========================================
+MODERN_STYLE = """
+/* Main Window & Dialogs */
+QMainWindow, QDialog {
+    background-color: #f0f2f5;
+    color: #333333; /* Ensures all generic text in dialogs is dark */
+}
+
+/* Scroll Area (The background behind the PDF) */
+QScrollArea {
+    background-color: #323639; /* Dark gray for modern document viewers */
+    border: none;
+}
+
+/* Toolbar styling */
+QToolBar {
+    background-color: #ffffff;
+    border-bottom: 1px solid #dcdcdc;
+    padding: 6px;
+    spacing: 8px;
+}
+QToolButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: #333333;
+    font-size: 13px;
+}
+QToolButton:hover {
+    background-color: #f0f2f5;
+    border: 1px solid #d0d0d0;
+}
+QToolButton:pressed {
+    background-color: #e4e6e9;
+}
+QToolButton:checked {
+    background-color: #e7f3ff;
+    border: 1px solid #1877f2;
+    color: #1877f2;
+    font-weight: bold;
+}
+QToolBar::separator {
+    background-color: #dcdcdc;
+    width: 1px;
+    margin: 4px 8px;
+}
+
+/* Tabs inside Dialogs */
+QTabWidget::pane {
+    border: 1px solid #ccd0d5;
+    background: #ffffff;
+    border-radius: 6px;
+    margin-top: -1px;
+}
+QTabBar::tab {
+    background: #e4e6e9;
+    color: #606770;
+    padding: 8px 24px;
+    margin-right: 4px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    font-size: 13px;
+}
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #1877f2;
+    border: 1px solid #ccd0d5;
+    border-bottom-color: #ffffff;
+    font-weight: bold;
+}
+
+/* Inputs */
+QLineEdit {
+    border: 1px solid #ccd0d5;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 14px;
+    background: #ffffff;
+    color: #333333; /* <--- FIXED: Forces text to be dark gray/black */
+    selection-background-color: #1877f2;
+    selection-color: #ffffff;
+}
+QLineEdit:focus {
+    border: 1px solid #1877f2;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #ffffff;
+    border: 1px solid #ccd0d5;
+    border-radius: 6px;
+    padding: 8px 16px;
+    color: #4b4f56;
+    font-size: 13px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #f5f6f7;
+}
+QPushButton#primaryBtn {
+    background-color: #1877f2;
+    color: #ffffff;
+    border: none;
+}
+QPushButton#primaryBtn:hover {
+    background-color: #166fe5;
+}
+"""
 
 # ==========================================
 # CUSTOM WIDGETS
@@ -18,11 +131,11 @@ class DrawCanvas(QLabel):
     def __init__(self):
         super().__init__()
         self.canvas = QPixmap(380, 180)
-        # Use a completely transparent background so it doesn't block PDF text
         self.canvas.fill(Qt.GlobalColor.transparent)
         self.setPixmap(self.canvas)
-        # Set a white background for the UI ONLY, so the user can see what they are drawing
-        self.setStyleSheet("background-color: white; border: 1px dotted #ccc;")
+        
+        # Modern dashed border to indicate a drawing zone
+        self.setStyleSheet("background-color: #fafafa; border: 2px dashed #bbbbbb; border-radius: 8px;")
         self.last_point = None
 
     def mousePressEvent(self, event):
@@ -32,11 +145,8 @@ class DrawCanvas(QLabel):
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.MouseButton.LeftButton and self.last_point:
             painter = QPainter(self.canvas)
-            # Use dark blue ink with a slightly thinner pen for realism
-            pen = QPen(QColor(0, 0, 139), 2, Qt.PenStyle.SolidLine)
+            pen = QPen(QColor(0, 0, 139), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
-            
-            # Use antialiasing to make the drawn lines much smoother
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             
             painter.drawLine(self.last_point, event.pos())
@@ -58,27 +168,32 @@ class SignaturePad(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create Signature")
-        self.setFixedSize(420, 320)
+        self.setFixedSize(450, 360) 
         
         self.signature_file_path = None
         layout = QVBoxLayout()
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
         self.tabs = QTabWidget()
         
         # --- TAB 1: DRAW ---
         self.tab_draw = QWidget()
         draw_layout = QVBoxLayout()
+        draw_layout.setSpacing(10)
         
         self.draw_canvas = DrawCanvas()
         draw_layout.addWidget(self.draw_canvas)
         
-        clear_btn = QPushButton("Clear")
+        clear_btn = QPushButton("🗑 Clear Canvas")
         clear_btn.clicked.connect(self.draw_canvas.clear_canvas)
-        draw_layout.addWidget(clear_btn)
+        draw_layout.addWidget(clear_btn, alignment=Qt.AlignmentFlag.AlignRight)
         self.tab_draw.setLayout(draw_layout)
         
         # --- TAB 2: TYPE ---
         self.tab_type = QWidget()
         type_layout = QVBoxLayout()
+        type_layout.setSpacing(10)
         
         self.text_input = QLineEdit()
         self.text_input.setPlaceholderText("Type your name here...")
@@ -86,7 +201,7 @@ class SignaturePad(QDialog):
         type_layout.addWidget(self.text_input)
         
         self.type_label = QLabel()
-        self.type_label.setStyleSheet("background-color: white; border: 1px dotted #ccc;")
+        self.type_label.setStyleSheet("background-color: #fafafa; border: 2px dashed #bbbbbb; border-radius: 8px;")
         self.type_canvas = QPixmap(380, 180)
         self.type_canvas.fill(Qt.GlobalColor.transparent)
         self.type_label.setPixmap(self.type_canvas)
@@ -95,31 +210,31 @@ class SignaturePad(QDialog):
         self.tab_type.setLayout(type_layout)
         
         # --- Add Tabs to Layout ---
-        self.tabs.addTab(self.tab_draw, "Draw")
-        self.tabs.addTab(self.tab_type, "Type")
+        self.tabs.addTab(self.tab_draw, "✍ Draw")
+        self.tabs.addTab(self.tab_type, "⌨ Type")
         layout.addWidget(self.tabs)
         
         # --- Save Button ---
         save_btn = QPushButton("Save Signature")
+        save_btn.setObjectName("primaryBtn") 
+        save_btn.setFixedHeight(40)
         save_btn.clicked.connect(self.save_signature)
         layout.addWidget(save_btn)
         
         self.setLayout(layout)
 
     def update_type_canvas(self, text):
-        """Renders the typed text onto a blank image canvas."""
         self.type_canvas.fill(Qt.GlobalColor.transparent)
         if text:
             painter = QPainter(self.type_canvas)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
             
-            font = QFont("Brush Script MT", 38, QFont.Weight.Normal)
+            font = QFont("Brush Script MT", 42, QFont.Weight.Normal)
             font.setItalic(True)
             font.setStyleHint(QFont.StyleHint.Cursive) 
             
             painter.setFont(font)
-            # Match the dark blue ink of the pen
             painter.setPen(QColor(0, 0, 139))
             
             painter.drawText(self.type_canvas.rect(), Qt.AlignmentFlag.AlignCenter, text)
@@ -128,7 +243,6 @@ class SignaturePad(QDialog):
         self.type_label.setPixmap(self.type_canvas)
 
     def save_signature(self):
-        """Saves whichever tab is currently active to a temp PNG file (preserves transparency)."""
         temp_dir = tempfile.gettempdir()
         self.signature_file_path = os.path.join(temp_dir, "temp_signature.png")
         
@@ -145,6 +259,7 @@ class PDFLabel(QLabel):
     def __init__(self, parent_editor):
         super().__init__()
         self.editor = parent_editor
+        self.setStyleSheet("background-color: white;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -159,8 +274,8 @@ class PDFLabel(QLabel):
 class PDFEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Python PDF Editor")
-        self.setGeometry(100, 100, 800, 1000)
+        self.setWindowTitle("Pro Python PDF Editor")
+        self.setGeometry(100, 100, 900, 1000)
         
         # State variables
         self.doc = None
@@ -172,39 +287,59 @@ class PDFEditor(QMainWindow):
         
         # UI Setup
         self.scroll_area = QScrollArea()
+        
+        # Center the document inside the dark scroll area
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
         self.image_label = PDFLabel(self) 
         self.scroll_area.setWidget(self.image_label)
         self.setCentralWidget(self.scroll_area)
         
+        # Add a sleek drop shadow to the PDF page
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 100))
+        shadow.setOffset(0, 4)
+        self.image_label.setGraphicsEffect(shadow)
+        self.image_label.hide() # Hide until a PDF is opened
+        
+        # Toolbar Setup
         toolbar = QToolBar("Main Toolbar")
+        toolbar.setMovable(False)
         self.addToolBar(toolbar)
         
-        open_action = toolbar.addAction("Open")
+        open_action = toolbar.addAction("📂 Open")
         open_action.triggered.connect(self.open_pdf)
         toolbar.addSeparator()
         
-        prev_action = toolbar.addAction("Previous")
+        prev_action = toolbar.addAction("⬅ Previous")
         prev_action.triggered.connect(self.prev_page)
-        next_action = toolbar.addAction("Next")
+        
+        next_action = toolbar.addAction("Next ➡")
         next_action.triggered.connect(self.next_page)
         toolbar.addSeparator()
         
-        zoom_in_action = toolbar.addAction("Zoom In")
+        zoom_in_action = toolbar.addAction("🔍 In")
         zoom_in_action.triggered.connect(self.zoom_in)
-        zoom_out_action = toolbar.addAction("Zoom Out")
+        
+        zoom_out_action = toolbar.addAction("🔎 Out")
         zoom_out_action.triggered.connect(self.zoom_out)
         toolbar.addSeparator()
         
-        self.text_action = toolbar.addAction("Text Tool")
+        self.text_action = toolbar.addAction("📝 Text")
         self.text_action.setCheckable(True) 
         self.text_action.triggered.connect(self.toggle_text_tool)
         
-        self.sign_action = toolbar.addAction("Signature Tool")
+        self.sign_action = toolbar.addAction("✍ Sign")
         self.sign_action.setCheckable(True)
         self.sign_action.triggered.connect(self.toggle_signature_tool)
         toolbar.addSeparator()
         
-        save_action = toolbar.addAction("Save As")
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        
+        save_action = toolbar.addAction("💾 Save As")
         save_action.triggered.connect(self.save_pdf)
         
     def open_pdf(self):
@@ -213,6 +348,7 @@ class PDFEditor(QMainWindow):
             self.doc = pymupdf.open(file_name)
             self.current_page = 0
             self.zoom_factor = 1.0 
+            self.image_label.show()
             self.show_page()
             
     def show_page(self):
@@ -295,13 +431,10 @@ class PDFEditor(QMainWindow):
                 self.toggle_text_tool(False)
                 
         elif self.signature_tool_active and self.signature_file_path:
-            # Much smaller dimensions (roughly 33% of the original dialog size)
             width = 120
             height = 60
             
-            # Offset the math so the signature is centered vertically and horizontally on your mouse click
             rect = pymupdf.Rect(pdf_x - (width/2), pdf_y - (height/2), pdf_x + (width/2), pdf_y + (height/2))
-            
             page.insert_image(rect, filename=self.signature_file_path)
             self.show_page()
 
@@ -319,8 +452,13 @@ class PDFEditor(QMainWindow):
                 pass
         event.accept()
 
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    
+    app.setStyle("Fusion") 
+    app.setStyleSheet(MODERN_STYLE)
+    
     window = PDFEditor()
     window.show()
     sys.exit(app.exec())
