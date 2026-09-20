@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QLabel, QScrollArea,
                              QVBoxLayout, QPushButton, QTabWidget,
                              QWidget, QLineEdit, QGraphicsDropShadowEffect,
                              QSpacerItem, QSizePolicy)
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QFont, QColor
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QFont, QColor, QKeySequence
 from PyQt6.QtCore import Qt
 
 # ==========================================
@@ -17,7 +17,7 @@ MODERN_STYLE = """
 /* Main Window & Dialogs */
 QMainWindow, QDialog {
     background-color: #f0f2f5;
-    color: #333333; /* Ensures all generic text in dialogs is dark */
+    color: #333333;
 }
 
 /* Scroll Area (The background behind the PDF) */
@@ -53,6 +53,11 @@ QToolButton:checked {
     border: 1px solid #1877f2;
     color: #1877f2;
     font-weight: bold;
+}
+QToolButton:disabled {
+    color: #b0b0b0;
+    background-color: transparent;
+    border: 1px solid transparent;
 }
 QToolBar::separator {
     background-color: #dcdcdc;
@@ -91,7 +96,7 @@ QLineEdit {
     padding: 10px;
     font-size: 14px;
     background: #ffffff;
-    color: #333333; /* <--- FIXED: Forces text to be dark gray/black */
+    color: #333333;
     selection-background-color: #1877f2;
     selection-color: #ffffff;
 }
@@ -127,14 +132,11 @@ QPushButton#primaryBtn:hover {
 # ==========================================
 
 class DrawCanvas(QLabel):
-    """A sub-component for the Draw tab that handles mouse drawing."""
     def __init__(self):
         super().__init__()
         self.canvas = QPixmap(380, 180)
         self.canvas.fill(Qt.GlobalColor.transparent)
         self.setPixmap(self.canvas)
-        
-        # Modern dashed border to indicate a drawing zone
         self.setStyleSheet("background-color: #fafafa; border: 2px dashed #bbbbbb; border-radius: 8px;")
         self.last_point = None
 
@@ -164,7 +166,6 @@ class DrawCanvas(QLabel):
 
 
 class SignaturePad(QDialog):
-    """A pop-up dialog with tabs for Drawing or Typing a signature."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create Signature")
@@ -255,7 +256,6 @@ class SignaturePad(QDialog):
 
 
 class PDFLabel(QLabel):
-    """A custom label that catches mouse clicks and passes them to the editor."""
     def __init__(self, parent_editor):
         super().__init__()
         self.editor = parent_editor
@@ -285,23 +285,24 @@ class PDFEditor(QMainWindow):
         self.signature_tool_active = False
         self.signature_file_path = None
         
+        # UNDO State Variables
+        self.undo_stack = []
+        self.MAX_UNDO_STEPS = 5 # Prevent high memory usage on huge PDFs
+        
         # UI Setup
         self.scroll_area = QScrollArea()
-        
-        # Center the document inside the dark scroll area
         self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.image_label = PDFLabel(self) 
         self.scroll_area.setWidget(self.image_label)
         self.setCentralWidget(self.scroll_area)
         
-        # Add a sleek drop shadow to the PDF page
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(20)
         shadow.setColor(QColor(0, 0, 0, 100))
         shadow.setOffset(0, 4)
         self.image_label.setGraphicsEffect(shadow)
-        self.image_label.hide() # Hide until a PDF is opened
+        self.image_label.hide() 
         
         # Toolbar Setup
         toolbar = QToolBar("Main Toolbar")
@@ -324,6 +325,13 @@ class PDFEditor(QMainWindow):
         
         zoom_out_action = toolbar.addAction("🔎 Out")
         zoom_out_action.triggered.connect(self.zoom_out)
+        toolbar.addSeparator()
+
+        # Add Undo Action
+        self.undo_action = toolbar.addAction("↩ Undo")
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo) # Ctrl+Z (or Cmd+Z on Mac)
+        self.undo_action.triggered.connect(self.undo)
+        self.undo_action.setEnabled(False) # Disabled initially
         toolbar.addSeparator()
         
         self.text_action = toolbar.addAction("📝 Text")
@@ -348,6 +356,11 @@ class PDFEditor(QMainWindow):
             self.doc = pymupdf.open(file_name)
             self.current_page = 0
             self.zoom_factor = 1.0 
+            
+            # Reset undo stack for the new document
+            self.undo_stack.clear()
+            self.undo_action.setEnabled(False)
+            
             self.image_label.show()
             self.show_page()
             
@@ -414,6 +427,34 @@ class PDFEditor(QMainWindow):
         else:
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def save_state_for_undo(self):
+        """Saves a snapshot of the current PDF to memory for undoing."""
+        if self.doc:
+            # tobytes() serializes the current state of the document
+            current_state = self.doc.tobytes()
+            self.undo_stack.append(current_state)
+            
+            # Keep stack limited to prevent memory bloat
+            if len(self.undo_stack) > self.MAX_UNDO_STEPS:
+                self.undo_stack.pop(0)
+                
+            self.undo_action.setEnabled(True)
+
+    def undo(self):
+        """Restores the last saved state of the PDF."""
+        if self.undo_stack:
+            last_state = self.undo_stack.pop()
+            
+            if self.doc:
+                self.doc.close()
+                
+            # Reload document from the byte stream
+            self.doc = pymupdf.open(stream=last_state, filetype="pdf")
+            self.show_page()
+            
+            if not self.undo_stack:
+                self.undo_action.setEnabled(False)
+
     def handle_click(self, x, y):
         if not self.doc:
             return
@@ -425,16 +466,20 @@ class PDFEditor(QMainWindow):
         if self.text_tool_active:
             text, ok = QInputDialog.getText(self, "Input Text", "Enter text to insert:")
             if ok and text:
+                self.save_state_for_undo() # Save state BEFORE making the change
+                
                 page.insert_text(pymupdf.Point(pdf_x, pdf_y), text, fontsize=12, color=(0, 0, 0))
                 self.show_page()
                 self.text_action.setChecked(False)
                 self.toggle_text_tool(False)
                 
         elif self.signature_tool_active and self.signature_file_path:
+            self.save_state_for_undo() # Save state BEFORE making the change
+            
             width = 120
             height = 60
-            
             rect = pymupdf.Rect(pdf_x - (width/2), pdf_y - (height/2), pdf_x + (width/2), pdf_y + (height/2))
+            
             page.insert_image(rect, filename=self.signature_file_path)
             self.show_page()
 
