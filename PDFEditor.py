@@ -20,13 +20,11 @@ QMainWindow, QDialog {
     color: #333333;
 }
 
-/* Scroll Area (The background behind the PDF) */
 QScrollArea {
-    background-color: #323639; /* Dark gray for modern document viewers */
+    background-color: #323639;
     border: none;
 }
 
-/* Toolbar styling */
 QToolBar {
     background-color: #ffffff;
     border-bottom: 1px solid #dcdcdc;
@@ -65,7 +63,6 @@ QToolBar::separator {
     margin: 4px 8px;
 }
 
-/* Tabs inside Dialogs */
 QTabWidget::pane {
     border: 1px solid #ccd0d5;
     background: #ffffff;
@@ -89,7 +86,6 @@ QTabBar::tab:selected {
     font-weight: bold;
 }
 
-/* Inputs */
 QLineEdit {
     border: 1px solid #ccd0d5;
     border-radius: 6px;
@@ -104,7 +100,6 @@ QLineEdit:focus {
     border: 1px solid #1877f2;
 }
 
-/* Buttons */
 QPushButton {
     background-color: #ffffff;
     border: 1px solid #ccd0d5;
@@ -130,6 +125,77 @@ QPushButton#primaryBtn:hover {
 # ==========================================
 # CUSTOM WIDGETS
 # ==========================================
+
+class DraggableSignature(QLabel):
+    """A floating, draggable label that represents a signature before it's saved to the PDF."""
+    def __init__(self, parent, file_path, pdf_x, pdf_y, editor):
+        super().__init__(parent)
+        self.editor = editor
+        self.file_path = file_path
+        
+        # Center coordinates relative to the original unscaled PDF dimensions
+        self.pdf_x = pdf_x
+        self.pdf_y = pdf_y
+        
+        self.original_pixmap = QPixmap(file_path)
+        
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setToolTip("Drag to move\nDouble-Click to Apply\nRight-Click to Cancel")
+        
+        # Visual feedback so the user knows it's a floating object
+        self.setStyleSheet("border: 2px dashed #1877f2; background-color: rgba(24, 119, 242, 20);")
+        
+        self.drag_start_pos = None
+        self.show()
+        self.update_zoom(self.editor.zoom_factor)
+
+    def update_zoom(self, zoom):
+        """Resizes and repositions the widget when the document is zoomed in/out."""
+        new_w = int(120 * zoom)
+        new_h = int(60 * zoom)
+        self.setFixedSize(new_w, new_h)
+        
+        scaled_pixmap = self.original_pixmap.scaled(
+            new_w, new_h, 
+            Qt.AspectRatioMode.KeepAspectRatio, 
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.setPixmap(scaled_pixmap)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        new_x = int((self.pdf_x * zoom) - (new_w / 2))
+        new_y = int((self.pdf_y * zoom) - (new_h / 2))
+        self.move(new_x, new_y)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.drag_start_pos = event.pos()
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Right-click cancels the signature
+            if self in self.editor.floating_signatures:
+                self.editor.floating_signatures.remove(self)
+            self.deleteLater()
+
+    def mouseMoveEvent(self, event):
+        if self.drag_start_pos is not None:
+            # Move the widget visually
+            delta = event.pos() - self.drag_start_pos
+            self.move(self.pos() + delta)
+            
+            # Update the underlying PDF coordinates so it stays in place if zoomed
+            self.pdf_x = (self.x() + self.width() / 2) / self.editor.zoom_factor
+            self.pdf_y = (self.y() + self.height() / 2) / self.editor.zoom_factor
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.drag_start_pos = None
+
+    def mouseDoubleClickEvent(self, event):
+        """Double clicking a floating signature permanently applies it."""
+        self.editor.commit_single_signature(self)
+
 
 class DrawCanvas(QLabel):
     def __init__(self):
@@ -166,8 +232,9 @@ class DrawCanvas(QLabel):
 
 
 class SignaturePad(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, parent_editor=None):
+        super().__init__(parent_editor)
+        self.editor = parent_editor
         self.setWindowTitle("Create Signature")
         self.setFixedSize(450, 360) 
         
@@ -178,7 +245,6 @@ class SignaturePad(QDialog):
         
         self.tabs = QTabWidget()
         
-        # --- TAB 1: DRAW ---
         self.tab_draw = QWidget()
         draw_layout = QVBoxLayout()
         draw_layout.setSpacing(10)
@@ -191,7 +257,6 @@ class SignaturePad(QDialog):
         draw_layout.addWidget(clear_btn, alignment=Qt.AlignmentFlag.AlignRight)
         self.tab_draw.setLayout(draw_layout)
         
-        # --- TAB 2: TYPE ---
         self.tab_type = QWidget()
         type_layout = QVBoxLayout()
         type_layout.setSpacing(10)
@@ -210,12 +275,10 @@ class SignaturePad(QDialog):
         
         self.tab_type.setLayout(type_layout)
         
-        # --- Add Tabs to Layout ---
         self.tabs.addTab(self.tab_draw, "✍ Draw")
         self.tabs.addTab(self.tab_type, "⌨ Type")
         layout.addWidget(self.tabs)
         
-        # --- Save Button ---
         save_btn = QPushButton("Save Signature")
         save_btn.setObjectName("primaryBtn") 
         save_btn.setFixedHeight(40)
@@ -244,13 +307,18 @@ class SignaturePad(QDialog):
         self.type_label.setPixmap(self.type_canvas)
 
     def save_signature(self):
-        temp_dir = tempfile.gettempdir()
-        self.signature_file_path = os.path.join(temp_dir, "temp_signature.png")
+        # Create a guaranteed unique temporary file for EVERY signature so they don't overwrite each other
+        fd, self.signature_file_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd) # Close file descriptor, we just need the path
         
         if self.tabs.currentIndex() == 0:
             self.draw_canvas.canvas.save(self.signature_file_path, "PNG")
         else:
             self.type_canvas.save(self.signature_file_path, "PNG")
+            
+        # Register the file with the main editor so it can be deleted on exit
+        if self.editor:
+            self.editor.temp_files.append(self.signature_file_path)
             
         self.accept()
 
@@ -285,9 +353,12 @@ class PDFEditor(QMainWindow):
         self.signature_tool_active = False
         self.signature_file_path = None
         
+        self.floating_signatures = [] # Tracks currently dragged signatures
+        self.temp_files = [] # Tracks all created temp image files for cleanup
+        
         # UNDO State Variables
         self.undo_stack = []
-        self.MAX_UNDO_STEPS = 5 # Prevent high memory usage on huge PDFs
+        self.MAX_UNDO_STEPS = 5
         
         # UI Setup
         self.scroll_area = QScrollArea()
@@ -327,11 +398,10 @@ class PDFEditor(QMainWindow):
         zoom_out_action.triggered.connect(self.zoom_out)
         toolbar.addSeparator()
 
-        # Add Undo Action
         self.undo_action = toolbar.addAction("↩ Undo")
-        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo) # Ctrl+Z (or Cmd+Z on Mac)
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo) 
         self.undo_action.triggered.connect(self.undo)
-        self.undo_action.setEnabled(False) # Disabled initially
+        self.undo_action.setEnabled(False) 
         toolbar.addSeparator()
         
         self.text_action = toolbar.addAction("📝 Text")
@@ -353,11 +423,11 @@ class PDFEditor(QMainWindow):
     def open_pdf(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if file_name:
+            self.clear_floating_signatures() # Erase any unsaved floats from previous doc
             self.doc = pymupdf.open(file_name)
             self.current_page = 0
             self.zoom_factor = 1.0 
             
-            # Reset undo stack for the new document
             self.undo_stack.clear()
             self.undo_action.setEnabled(False)
             
@@ -375,14 +445,21 @@ class PDFEditor(QMainWindow):
             pixmap = QPixmap.fromImage(qimage)
             self.image_label.setPixmap(pixmap)
             self.image_label.resize(pixmap.width(), pixmap.height())
+            
+            # Ensure any floating signatures update their scaling to match the document
+            for sig in self.floating_signatures:
+                sig.update_zoom(self.zoom_factor)
+                sig.raise_() # Make sure they sit on top of the PDF
 
     def prev_page(self):
         if self.doc and self.current_page > 0:
+            self.apply_all_floating_signatures() # Auto-commit before page turn
             self.current_page -= 1
             self.show_page()
 
     def next_page(self):
         if self.doc and self.current_page < len(self.doc) - 1:
+            self.apply_all_floating_signatures() # Auto-commit before page turn
             self.current_page += 1
             self.show_page()
             
@@ -428,32 +505,68 @@ class PDFEditor(QMainWindow):
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def save_state_for_undo(self):
-        """Saves a snapshot of the current PDF to memory for undoing."""
         if self.doc:
-            # tobytes() serializes the current state of the document
             current_state = self.doc.tobytes()
             self.undo_stack.append(current_state)
             
-            # Keep stack limited to prevent memory bloat
             if len(self.undo_stack) > self.MAX_UNDO_STEPS:
                 self.undo_stack.pop(0)
                 
             self.undo_action.setEnabled(True)
 
     def undo(self):
-        """Restores the last saved state of the PDF."""
         if self.undo_stack:
             last_state = self.undo_stack.pop()
             
             if self.doc:
                 self.doc.close()
                 
-            # Reload document from the byte stream
             self.doc = pymupdf.open(stream=last_state, filetype="pdf")
             self.show_page()
             
             if not self.undo_stack:
                 self.undo_action.setEnabled(False)
+
+    def commit_single_signature(self, sig_widget):
+        """Burns a single floating signature into the PDF."""
+        self.save_state_for_undo()
+        page = self.doc[self.current_page]
+        
+        # Calculate bounding box
+        rect = pymupdf.Rect(sig_widget.pdf_x - 60, sig_widget.pdf_y - 30, 
+                            sig_widget.pdf_x + 60, sig_widget.pdf_y + 30)
+                            
+        page.insert_image(rect, filename=sig_widget.file_path)
+        
+        # Clean up widget
+        if sig_widget in self.floating_signatures:
+            self.floating_signatures.remove(sig_widget)
+        sig_widget.deleteLater()
+        
+        self.show_page()
+
+    def apply_all_floating_signatures(self):
+        """Burns ALL active floating signatures into the PDF."""
+        if not self.floating_signatures:
+            return
+            
+        self.save_state_for_undo()
+        page = self.doc[self.current_page]
+        
+        for sig_widget in self.floating_signatures:
+            rect = pymupdf.Rect(sig_widget.pdf_x - 60, sig_widget.pdf_y - 30, 
+                                sig_widget.pdf_x + 60, sig_widget.pdf_y + 30)
+            page.insert_image(rect, filename=sig_widget.file_path)
+            sig_widget.deleteLater()
+            
+        self.floating_signatures.clear()
+        # We purposely don't call show_page() here because the function calling this (like zoom/page turn) will do it.
+
+    def clear_floating_signatures(self):
+        """Deletes floats without saving them (used when opening a brand new PDF)."""
+        for sig in self.floating_signatures:
+            sig.deleteLater()
+        self.floating_signatures.clear()
 
     def handle_click(self, x, y):
         if not self.doc:
@@ -466,33 +579,37 @@ class PDFEditor(QMainWindow):
         if self.text_tool_active:
             text, ok = QInputDialog.getText(self, "Input Text", "Enter text to insert:")
             if ok and text:
-                self.save_state_for_undo() # Save state BEFORE making the change
-                
+                self.save_state_for_undo()
                 page.insert_text(pymupdf.Point(pdf_x, pdf_y), text, fontsize=12, color=(0, 0, 0))
                 self.show_page()
                 self.text_action.setChecked(False)
                 self.toggle_text_tool(False)
                 
         elif self.signature_tool_active and self.signature_file_path:
-            self.save_state_for_undo() # Save state BEFORE making the change
+            # Spawn a draggable widget instead of burning it immediately
+            sig_widget = DraggableSignature(self.image_label, self.signature_file_path, pdf_x, pdf_y, self)
+            self.floating_signatures.append(sig_widget)
             
-            width = 120
-            height = 60
-            rect = pymupdf.Rect(pdf_x - (width/2), pdf_y - (height/2), pdf_x + (width/2), pdf_y + (height/2))
-            
-            page.insert_image(rect, filename=self.signature_file_path)
-            self.show_page()
+            # Deactivate tool immediately so user can safely click and drag the new element
+            self.sign_action.setChecked(False)
+            self.signature_tool_active = False
+            self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def save_pdf(self):
         if self.doc:
+            self.apply_all_floating_signatures() # Burn everything before saving!
+            self.show_page() # Refresh visual
+            
             file_name, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
             if file_name:
                 self.doc.save(file_name)
 
     def closeEvent(self, event):
-        if self.signature_file_path:
+        """Clean up all temporary signature files that were generated during the session."""
+        for temp_file in self.temp_files:
             try:
-                os.remove(self.signature_file_path)
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
             except OSError:
                 pass
         event.accept()
@@ -500,10 +617,8 @@ class PDFEditor(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    
     app.setStyle("Fusion") 
     app.setStyleSheet(MODERN_STYLE)
-    
     window = PDFEditor()
     window.show()
     sys.exit(app.exec())
