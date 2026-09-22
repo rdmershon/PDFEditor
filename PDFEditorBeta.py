@@ -2,32 +2,24 @@ import sys
 import pymupdf
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QLabel, QScrollArea, QFileDialog, 
                              QToolBar, QInputDialog, QMessageBox, QDialog, QVBoxLayout, 
-                             QHBoxLayout, QTextEdit, QSpinBox, QDialogButtonBox, QPushButton, QWidget)
+                             QHBoxLayout, QTextEdit, QSpinBox, QDialogButtonBox, QPushButton, QWidget, QComboBox)
 from PyQt6.QtGui import (QImage, QPixmap, QPainter, QPen, QColor)
 from PyQt6.QtCore import Qt, QPoint, QByteArray, QBuffer, QIODevice
 
-# --- NEW: Signature Drawing Pad Widget ---
 class SignaturePad(QWidget):
     def __init__(self):
         super().__init__()
-        # Size of the signing canvas
         self.setFixedSize(400, 200)
-        
-        # We draw onto a transparent QImage so the background doesn't block PDF text
         self.image = QImage(self.size(), QImage.Format.Format_ARGB32)
         self.image.fill(Qt.GlobalColor.transparent)
         
         self.drawing = False
         self.last_point = QPoint()
-        
-        # Realistic Ink settings: Dark Blue ink, thickness 3, round edges
         self.pen = QPen(QColor(25, 25, 112), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
 
     def paintEvent(self, event):
         canvas_painter = QPainter(self)
-        # Draw a white background just for the UI visualization, so the user can see what they are doing
         canvas_painter.fillRect(self.rect(), Qt.GlobalColor.white)
-        # Overlay the transparent image containing their drawing
         canvas_painter.drawImage(self.rect(), self.image, self.image.rect())
 
     def mousePressEvent(self, event):
@@ -37,25 +29,22 @@ class SignaturePad(QWidget):
 
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.MouseButton.LeftButton) and self.drawing:
-            # Draw directly onto the transparent QImage
             painter = QPainter(self.image)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing) # Makes the curves smooth
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(self.pen)
             painter.drawLine(self.last_point, event.pos())
             self.last_point = event.pos()
-            self.update() # Triggers the paintEvent to refresh the screen
+            self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = False
 
     def clear(self):
-        """Clears the drawing pad."""
         self.image.fill(Qt.GlobalColor.transparent)
         self.update()
 
     def get_image_bytes(self):
-        """Converts the drawn QImage into a transparent PNG byte array for PyMuPDF."""
         byte_array = QByteArray()
         buffer = QBuffer(byte_array)
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
@@ -63,7 +52,6 @@ class SignaturePad(QWidget):
         return byte_array.data()
 
 
-# --- NEW: Dialog window to house the signature pad ---
 class SignatureDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,7 +61,6 @@ class SignatureDialog(QDialog):
         self.pad = SignaturePad()
         layout.addWidget(self.pad)
         
-        # Buttons Layout
         btn_layout = QHBoxLayout()
         clear_btn = QPushButton("Clear")
         clear_btn.clicked.connect(self.pad.clear)
@@ -87,20 +74,29 @@ class SignatureDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
+# --- UPGRADED: Add Text Dialog with Font Selection ---
 class AddTextDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Text to PDF")
-        self.resize(300, 200)
+        self.resize(300, 250)
         layout = QVBoxLayout(self)
         
-        font_layout = QHBoxLayout()
-        font_layout.addWidget(QLabel("Font Size:"))
+        # Top formatting row (Font & Size)
+        format_layout = QHBoxLayout()
+        
+        format_layout.addWidget(QLabel("Font:"))
+        self.font_combo = QComboBox()
+        self.font_combo.addItems(["Helvetica", "Times Roman", "Courier"])
+        format_layout.addWidget(self.font_combo)
+        
+        format_layout.addWidget(QLabel("Size:"))
         self.font_spin = QSpinBox()
         self.font_spin.setValue(12) 
         self.font_spin.setRange(6, 144)
-        font_layout.addWidget(self.font_spin)
-        layout.addLayout(font_layout)
+        format_layout.addWidget(self.font_spin)
+        
+        layout.addLayout(format_layout)
         
         layout.addWidget(QLabel("Text:"))
         self.text_edit = QTextEdit()
@@ -112,7 +108,8 @@ class AddTextDialog(QDialog):
         layout.addWidget(self.buttons)
 
     def get_data(self):
-        return self.text_edit.toPlainText(), self.font_spin.value()
+        # Returns 3 values now: Text, Size, and Font Family Name
+        return self.text_edit.toPlainText(), self.font_spin.value(), self.font_combo.currentText()
 
 
 class PDFLabel(QLabel):
@@ -121,7 +118,6 @@ class PDFLabel(QLabel):
         self.editor = parent_editor
 
     def mousePressEvent(self, event):
-        # Allow clicks if ANY of the three tools are active
         if event.button() == Qt.MouseButton.LeftButton and (self.editor.text_tool_active or self.editor.edit_tool_active or self.editor.sign_tool_active):
             self.editor.handle_click(event.pos().x(), event.pos().y())
 
@@ -135,17 +131,15 @@ class PDFEditor(QMainWindow):
         self.doc = None
         self.current_page = 0
         
-        # Tool States
         self.text_tool_active = False 
         self.edit_tool_active = False 
-        self.sign_tool_active = False # NEW Tool State
+        self.sign_tool_active = False
         
         self.scroll_area = QScrollArea()
         self.image_label = PDFLabel(self) 
         self.scroll_area.setWidget(self.image_label)
         self.setCentralWidget(self.scroll_area)
         
-        # Toolbar setup
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
         
@@ -159,17 +153,14 @@ class PDFEditor(QMainWindow):
         next_action.triggered.connect(self.next_page)
         toolbar.addSeparator()
         
-        # Text Tool
         self.text_action = toolbar.addAction("Add Text")
         self.text_action.setCheckable(True) 
         self.text_action.triggered.connect(self.toggle_text_tool)
         
-        # Edit Tool
         self.edit_action = toolbar.addAction("Edit Text")
         self.edit_action.setCheckable(True) 
         self.edit_action.triggered.connect(self.toggle_edit_tool)
 
-        # --- NEW: Sign Tool ---
         self.sign_action = toolbar.addAction("Sign Document")
         self.sign_action.setCheckable(True)
         self.sign_action.triggered.connect(self.toggle_sign_tool)
@@ -205,7 +196,6 @@ class PDFEditor(QMainWindow):
             self.current_page += 1
             self.show_page()
             
-    # --- TOOL TOGGLES (Mutually Exclusive) ---
     def toggle_text_tool(self, checked):
         self.text_tool_active = checked
         if checked:
@@ -240,7 +230,6 @@ class PDFEditor(QMainWindow):
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def handle_click(self, x, y):
-        """Routes the click coordinates to the currently active tool."""
         if not self.doc:
             return
 
@@ -250,10 +239,28 @@ class PDFEditor(QMainWindow):
         if self.text_tool_active:
             dialog = AddTextDialog(self)
             if dialog.exec(): 
-                text, font_size = dialog.get_data()
+                # Unpack the new font_name string
+                text, font_size, font_name = dialog.get_data()
+                
+                # Map the user's dropdown choice to PyMuPDF's internal font codes
+                font_map = {
+                    "Helvetica": "helv",
+                    "Times Roman": "tiro",
+                    "Courier": "cour"
+                }
+                pdf_font = font_map.get(font_name, "helv")
+                
                 if text.strip():
                     insertion_point = pymupdf.Point(x, y + font_size)
-                    page.insert_text(insertion_point, text, fontsize=font_size, color=(0, 0, 0))
+                    
+                    # Insert using the newly mapped fontname
+                    page.insert_text(
+                        insertion_point, 
+                        text, 
+                        fontsize=font_size, 
+                        fontname=pdf_font,
+                        color=(0, 0, 0)
+                    )
                     self.show_page()
             
             self.text_action.setChecked(False)
@@ -294,22 +301,15 @@ class PDFEditor(QMainWindow):
             dialog = SignatureDialog(self)
             
             if dialog.exec():
-                # Get the transparent PNG byte array from the pad
                 signature_bytes = dialog.pad.get_image_bytes()
                 
-                # Calculate bounding box for where the signature belongs.
-                # Canvas is 400x200 (2:1). We scale it down to width=150, height=75.
-                # 'y' acts as the baseline (like sitting on a signature line).
                 img_width = 150
                 img_height = 75
                 rect = pymupdf.Rect(x, y - img_height, x + img_width, y)
                 
-                # Insert image stream into PyMuPDF
                 page.insert_image(rect, stream=signature_bytes)
-                
                 self.show_page()
 
-            # Turn off sign tool after use
             self.sign_action.setChecked(False)
             self.toggle_sign_tool(False)
 
