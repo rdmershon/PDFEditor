@@ -1,4 +1,4 @@
-# Pro Python PDF Editor
+# Basic Python PDF Editor
 
 A lightweight, modern desktop application for viewing, annotating, and signing PDF documents. Built with Python, PyQt6, and PyMuPDF.
 
