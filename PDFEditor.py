@@ -1,685 +1,480 @@
 import sys
 import os
-import tempfile
 import pymupdf
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QLabel, QScrollArea, 
-                             QFileDialog, QToolBar, QInputDialog, QDialog, 
-                             QVBoxLayout, QPushButton, QTabWidget,
-                             QWidget, QLineEdit, QGraphicsDropShadowEffect,
-                             QSpacerItem, QSizePolicy)
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QFont, QColor, QKeySequence
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QLabel, QScrollArea, QFileDialog, 
+                             QToolBar, QInputDialog, QMessageBox, QDialog, QVBoxLayout, 
+                             QHBoxLayout, QTextEdit, QSpinBox, QDialogButtonBox, QPushButton, 
+                             QWidget, QComboBox, QGraphicsDropShadowEffect, QCheckBox)
+from PyQt6.QtGui import (QImage, QPixmap, QPainter, QPen, QColor, QFont)
+from PyQt6.QtCore import Qt, QPoint, QByteArray, QBuffer, QIODevice
+
+# The local file where your signature will be stored
+SIGNATURE_FILE = "saved_signature.png"
 
 # ==========================================
-# MODERN STYLESHEET (QSS)
+# MODERN APPLICATION STYLESHEET (QSS)
 # ==========================================
 MODERN_STYLE = """
-/* Main Window & Dialogs */
-QMainWindow, QDialog {
-    background-color: #f0f2f5;
-    color: #333333;
+QMainWindow {
+    background-color: #2b2b2b;
 }
-
+QToolBar {
+    background-color: #3c3f41;
+    border-bottom: 1px solid #222222;
+    padding: 5px;
+    spacing: 10px;
+}
+QToolBar QToolButton {
+    color: #e0e0e0;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+}
+QToolBar QToolButton:hover {
+    background-color: #4b4d4f;
+    border: 1px solid #5c5e60;
+}
+QToolBar QToolButton:checked {
+    background-color: #007acc; 
+    color: white;
+    border: 1px solid #005a9e;
+}
 QScrollArea {
-    background-color: #323639;
+    background-color: #525659; 
     border: none;
 }
-
-QToolBar {
-    background-color: #ffffff;
-    border-bottom: 1px solid #dcdcdc;
-    padding: 6px;
-    spacing: 8px;
+QDialog {
+    background-color: #2b2b2b; 
 }
-QToolButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    padding: 6px 12px;
-    color: #333333;
+QLabel {
+    font-size: 13px;
+    color: #e0e0e0; 
+}
+QCheckBox {
+    color: #e0e0e0;
     font-size: 13px;
 }
-QToolButton:hover {
-    background-color: #f0f2f5;
-    border: 1px solid #d0d0d0;
-}
-QToolButton:pressed {
-    background-color: #e4e6e9;
-}
-QToolButton:checked {
-    background-color: #e7f3ff;
-    border: 1px solid #1877f2;
-    color: #1877f2;
-    font-weight: bold;
-}
-QToolButton:disabled {
-    color: #b0b0b0;
-    background-color: transparent;
-    border: 1px solid transparent;
-}
-QToolBar::separator {
-    background-color: #dcdcdc;
-    width: 1px;
-    margin: 4px 8px;
-}
-
-QTabWidget::pane {
-    border: 1px solid #ccd0d5;
-    background: #ffffff;
-    border-radius: 6px;
-    margin-top: -1px;
-}
-QTabBar::tab {
-    background: #e4e6e9;
-    color: #606770;
-    padding: 8px 24px;
-    margin-right: 4px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    font-size: 13px;
-}
-QTabBar::tab:selected {
-    background: #ffffff;
-    color: #1877f2;
-    border: 1px solid #ccd0d5;
-    border-bottom-color: #ffffff;
-    font-weight: bold;
-}
-
-QLineEdit {
-    border: 1px solid #ccd0d5;
-    border-radius: 6px;
-    padding: 10px;
-    font-size: 14px;
-    background: #ffffff;
-    color: #333333;
-    selection-background-color: #1877f2;
-    selection-color: #ffffff;
-}
-QLineEdit:focus {
-    border: 1px solid #1877f2;
-}
-
 QPushButton {
-    background-color: #ffffff;
-    border: 1px solid #ccd0d5;
-    border-radius: 6px;
-    padding: 8px 16px;
-    color: #4b4f56;
-    font-size: 13px;
+    background-color: #007acc;
+    color: white;
+    border-radius: 5px;
+    padding: 6px 15px;
     font-weight: bold;
 }
 QPushButton:hover {
-    background-color: #f5f6f7;
+    background-color: #0098ff;
 }
-QPushButton#primaryBtn {
-    background-color: #1877f2;
-    color: #ffffff;
-    border: none;
+QTextEdit, QSpinBox, QComboBox, QLineEdit {
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px;
+    background-color: #ffffff; 
+    color: #000000;            
+    font-size: 13px;
 }
-QPushButton#primaryBtn:hover {
-    background-color: #166fe5;
+QComboBox QAbstractItemView {
+    background-color: #ffffff; 
+    color: #000000;            
+    selection-background-color: #007acc;
 }
 """
 
-# ==========================================
-# CUSTOM WIDGETS
-# ==========================================
-
-class DraggableText(QLabel):
-    """A floating, draggable label for Text tools."""
-    def __init__(self, parent, text, pdf_x, pdf_y, editor):
-        super().__init__(parent)
-        self.editor = editor
-        self.text_content = text
-        
-        # Coordinates relative to the original unscaled PDF dimensions
-        self.pdf_x = pdf_x
-        self.pdf_y = pdf_y
-        self.base_font_size = 12
-        
-        self.setText(text)
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setToolTip("Drag to move\nClick outside to Apply\nRight-Click to Cancel")
-        
-        self.setStyleSheet("border: 2px dashed #1877f2; background-color: rgba(24, 119, 242, 20); color: black; padding: 2px;")
-        
-        self.drag_start_pos = None
-        self.show()
-        self.update_zoom(self.editor.zoom_factor)
-
-    def update_zoom(self, zoom):
-        current_font_size = max(1, int(self.base_font_size * zoom))
-        font = QFont("Arial", current_font_size)
-        self.setFont(font)
-        self.adjustSize() # Auto-scale the label box to fit the new text size
-        
-        new_x = int(self.pdf_x * zoom)
-        new_y = int(self.pdf_y * zoom)
-        self.move(new_x, new_y)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.drag_start_pos = event.pos()
-        elif event.button() == Qt.MouseButton.RightButton:
-            if self in self.editor.floating_elements:
-                self.editor.floating_elements.remove(self)
-            self.deleteLater()
-
-    def mouseMoveEvent(self, event):
-        if self.drag_start_pos is not None:
-            delta = event.pos() - self.drag_start_pos
-            self.move(self.pos() + delta)
-            
-            # Update PDF top-left coordinates based on visual movement
-            self.pdf_x = self.x() / self.editor.zoom_factor
-            self.pdf_y = self.y() / self.editor.zoom_factor
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
-            self.drag_start_pos = None
-
-    def mouseDoubleClickEvent(self, event):
-        self.editor.commit_single_element(self)
-
-
-class DraggableSignature(QLabel):
-    """A floating, draggable label for Signature image tools."""
-    def __init__(self, parent, file_path, pdf_x, pdf_y, editor):
-        super().__init__(parent)
-        self.editor = editor
-        self.file_path = file_path
-        
-        self.pdf_x = pdf_x
-        self.pdf_y = pdf_y
-        
-        self.original_pixmap = QPixmap(file_path)
-        
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setToolTip("Drag to move\nClick outside to Apply\nRight-Click to Cancel")
-        
-        self.setStyleSheet("border: 2px dashed #1877f2; background-color: rgba(24, 119, 242, 20);")
-        
-        self.drag_start_pos = None
-        self.show()
-        self.update_zoom(self.editor.zoom_factor)
-
-    def update_zoom(self, zoom):
-        new_w = int(120 * zoom)
-        new_h = int(60 * zoom)
-        self.setFixedSize(new_w, new_h)
-        
-        scaled_pixmap = self.original_pixmap.scaled(
-            new_w, new_h, 
-            Qt.AspectRatioMode.KeepAspectRatio, 
-            Qt.TransformationMode.SmoothTransformation
-        )
-        self.setPixmap(scaled_pixmap)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        new_x = int((self.pdf_x * zoom) - (new_w / 2))
-        new_y = int((self.pdf_y * zoom) - (new_h / 2))
-        self.move(new_x, new_y)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.drag_start_pos = event.pos()
-        elif event.button() == Qt.MouseButton.RightButton:
-            if self in self.editor.floating_elements:
-                self.editor.floating_elements.remove(self)
-            self.deleteLater()
-
-    def mouseMoveEvent(self, event):
-        if self.drag_start_pos is not None:
-            delta = event.pos() - self.drag_start_pos
-            self.move(self.pos() + delta)
-            
-            self.pdf_x = (self.x() + self.width() / 2) / self.editor.zoom_factor
-            self.pdf_y = (self.y() + self.height() / 2) / self.editor.zoom_factor
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
-            self.drag_start_pos = None
-
-    def mouseDoubleClickEvent(self, event):
-        self.editor.commit_single_element(self)
-
-
-class DrawCanvas(QLabel):
+class SignaturePad(QWidget):
     def __init__(self):
         super().__init__()
-        self.canvas = QPixmap(380, 180)
-        self.canvas.fill(Qt.GlobalColor.transparent)
-        self.setPixmap(self.canvas)
-        self.setStyleSheet("background-color: #fafafa; border: 2px dashed #bbbbbb; border-radius: 8px;")
-        self.last_point = None
+        self.setFixedSize(400, 200)
+        self.image = QImage(self.size(), QImage.Format.Format_ARGB32)
+        self.image.fill(Qt.GlobalColor.transparent)
+        
+        self.drawing = False
+        self.last_point = QPoint()
+        self.pen = QPen(QColor(25, 25, 112), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+
+    def paintEvent(self, event):
+        canvas_painter = QPainter(self)
+        canvas_painter.fillRect(self.rect(), Qt.GlobalColor.white)
+        canvas_painter.setPen(QPen(QColor("#cccccc"), 2))
+        canvas_painter.drawRect(0, 0, self.width()-1, self.height()-1)
+        canvas_painter.drawImage(self.rect(), self.image, self.image.rect())
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            self.drawing = True
             self.last_point = event.pos()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.MouseButton.LeftButton and self.last_point:
-            painter = QPainter(self.canvas)
-            pen = QPen(QColor(0, 0, 139), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(pen)
+        if (event.buttons() & Qt.MouseButton.LeftButton) and self.drawing:
+            painter = QPainter(self.image)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            
+            painter.setPen(self.pen)
             painter.drawLine(self.last_point, event.pos())
-            painter.end()
             self.last_point = event.pos()
-            self.setPixmap(self.canvas)
+            self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.last_point = None
-            
-    def clear_canvas(self):
-        self.canvas.fill(Qt.GlobalColor.transparent)
-        self.setPixmap(self.canvas)
+            self.drawing = False
+
+    def clear(self):
+        self.image.fill(Qt.GlobalColor.transparent)
+        self.update()
+
+    def get_image_bytes(self):
+        byte_array = QByteArray()
+        buffer = QBuffer(byte_array)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        self.image.save(buffer, "PNG")
+        return byte_array.data()
 
 
-class SignaturePad(QDialog):
-    def __init__(self, parent_editor=None):
-        super().__init__(parent_editor)
-        self.editor = parent_editor
-        self.setWindowTitle("Create Signature")
-        self.setFixedSize(450, 360) 
+class SignatureDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Sign Document")
         
-        self.signature_file_path = None
-        layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(15, 15, 15, 15)
+        # This will hold the final image bytes sent back to the main app
+        self.final_signature_bytes = None
         
-        self.tabs = QTabWidget()
+        layout = QVBoxLayout(self)
         
-        self.tab_draw = QWidget()
-        draw_layout = QVBoxLayout()
-        draw_layout.setSpacing(10)
-        
-        self.draw_canvas = DrawCanvas()
-        draw_layout.addWidget(self.draw_canvas)
-        
-        clear_btn = QPushButton("🗑 Clear Canvas")
-        clear_btn.clicked.connect(self.draw_canvas.clear_canvas)
-        draw_layout.addWidget(clear_btn, alignment=Qt.AlignmentFlag.AlignRight)
-        self.tab_draw.setLayout(draw_layout)
-        
-        self.tab_type = QWidget()
-        type_layout = QVBoxLayout()
-        type_layout.setSpacing(10)
-        
-        self.text_input = QLineEdit()
-        self.text_input.setPlaceholderText("Type your name here...")
-        self.text_input.textChanged.connect(self.update_type_canvas) 
-        type_layout.addWidget(self.text_input)
-        
-        self.type_label = QLabel()
-        self.type_label.setStyleSheet("background-color: #fafafa; border: 2px dashed #bbbbbb; border-radius: 8px;")
-        self.type_canvas = QPixmap(380, 180)
-        self.type_canvas.fill(Qt.GlobalColor.transparent)
-        self.type_label.setPixmap(self.type_canvas)
-        type_layout.addWidget(self.type_label)
-        
-        self.tab_type.setLayout(type_layout)
-        
-        self.tabs.addTab(self.tab_draw, "✍ Draw")
-        self.tabs.addTab(self.tab_type, "⌨ Type")
-        layout.addWidget(self.tabs)
-        
-        save_btn = QPushButton("Save Signature")
-        save_btn.setObjectName("primaryBtn") 
-        save_btn.setFixedHeight(40)
-        save_btn.clicked.connect(self.save_signature)
-        layout.addWidget(save_btn)
-        
-        self.setLayout(layout)
+        # --- NEW: Check for an existing saved signature ---
+        if os.path.exists(SIGNATURE_FILE):
+            self.load_btn = QPushButton("✅ Use Saved Signature")
+            self.load_btn.setStyleSheet("background-color: #27ae60; color: white; padding: 10px; font-size: 14px;") 
+            self.load_btn.clicked.connect(self.use_saved_signature)
+            layout.addWidget(self.load_btn)
+            
+            separator = QLabel("— OR DRAW A NEW ONE —")
+            separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            separator.setStyleSheet("color: #888888; margin: 10px 0px;")
+            layout.addWidget(separator)
 
-    def update_type_canvas(self, text):
-        self.type_canvas.fill(Qt.GlobalColor.transparent)
-        if text:
-            painter = QPainter(self.type_canvas)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-            
-            font = QFont("Brush Script MT", 42, QFont.Weight.Normal)
-            font.setItalic(True)
-            font.setStyleHint(QFont.StyleHint.Cursive) 
-            
-            painter.setFont(font)
-            painter.setPen(QColor(0, 0, 139))
-            
-            painter.drawText(self.type_canvas.rect(), Qt.AlignmentFlag.AlignCenter, text)
-            painter.end()
-            
-        self.type_label.setPixmap(self.type_canvas)
-
-    def save_signature(self):
-        fd, self.signature_file_path = tempfile.mkstemp(suffix=".png")
-        os.close(fd) 
+        header = QLabel("Draw your signature smoothly below:")
+        header.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        layout.addWidget(header)
         
-        if self.tabs.currentIndex() == 0:
-            self.draw_canvas.canvas.save(self.signature_file_path, "PNG")
-        else:
-            self.type_canvas.save(self.signature_file_path, "PNG")
-            
-        if self.editor:
-            self.editor.temp_files.append(self.signature_file_path)
-            
+        self.pad = SignaturePad()
+        layout.addWidget(self.pad)
+        
+        # --- NEW: Checkbox to save the new signature ---
+        self.save_checkbox = QCheckBox("Save this signature for future use")
+        layout.addWidget(self.save_checkbox)
+        
+        btn_layout = QHBoxLayout()
+        clear_btn = QPushButton("Clear Pad")
+        clear_btn.setStyleSheet("background-color: #e74c3c; color: white;") 
+        clear_btn.clicked.connect(self.pad.clear)
+        btn_layout.addWidget(clear_btn)
+        
+        btn_layout.addStretch() 
+        
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.process_new_signature)
+        self.buttons.rejected.connect(self.reject)
+        btn_layout.addWidget(self.buttons)
+        
+        layout.addLayout(btn_layout)
+
+    # --- NEW: Handlers for processing the signature choice ---
+    def use_saved_signature(self):
+        """Reads the signature from the local file and accepts the dialog."""
+        with open(SIGNATURE_FILE, "rb") as f:
+            self.final_signature_bytes = f.read()
         self.accept()
+
+    def process_new_signature(self):
+        """Grabs the drawn signature, saves it if requested, and accepts the dialog."""
+        self.final_signature_bytes = self.pad.get_image_bytes()
+        
+        if self.save_checkbox.isChecked():
+            # Write the raw PNG bytes to a local file
+            with open(SIGNATURE_FILE, "wb") as f:
+                f.write(self.final_signature_bytes)
+                
+        self.accept()
+
+
+class AddTextDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Text")
+        self.resize(350, 250)
+        layout = QVBoxLayout(self)
+        
+        format_layout = QHBoxLayout()
+        
+        format_layout.addWidget(QLabel("Font:"))
+        self.font_combo = QComboBox()
+        self.font_combo.addItems(["Helvetica", "Times Roman", "Courier"])
+        format_layout.addWidget(self.font_combo)
+        
+        format_layout.addWidget(QLabel("Size:"))
+        self.font_spin = QSpinBox()
+        self.font_spin.setValue(12) 
+        self.font_spin.setRange(6, 144)
+        format_layout.addWidget(self.font_spin)
+        
+        layout.addLayout(format_layout)
+        
+        layout.addWidget(QLabel("Enter your text here:"))
+        self.text_edit = QTextEdit()
+        layout.addWidget(self.text_edit)
+        
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+    def get_data(self):
+        return self.text_edit.toPlainText(), self.font_spin.value(), self.font_combo.currentText()
 
 
 class PDFLabel(QLabel):
     def __init__(self, parent_editor):
         super().__init__()
         self.editor = parent_editor
-        self.setStyleSheet("background-color: white;")
+        self.setStyleSheet("background-color: white;") 
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            # Commit ANY floating items (text or signatures) if we click outside of them
-            if self.editor.floating_elements:
-                self.editor.apply_all_floating_elements()
-                self.editor.show_page()
-                return
-                
-            if self.editor.text_tool_active or self.editor.signature_tool_active:
-                self.editor.handle_click(event.pos().x(), event.pos().y())
+        if event.button() == Qt.MouseButton.LeftButton and (self.editor.text_tool_active or self.editor.edit_tool_active or self.editor.sign_tool_active):
+            self.editor.handle_click(event.pos().x(), event.pos().y())
 
-
-# ==========================================
-# MAIN APPLICATION
-# ==========================================
 
 class PDFEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Pro Python PDF Editor")
-        self.setGeometry(100, 100, 900, 1000)
+        self.setWindowTitle("Python Pro PDF Editor")
+        self.setGeometry(100, 100, 1000, 800)
         
         self.doc = None
         self.current_page = 0
-        self.zoom_factor = 1.0 
-        self.text_tool_active = False
-        self.signature_tool_active = False
-        self.signature_file_path = None
         
-        # Combined array for both floating Text and Signatures
-        self.floating_elements = [] 
-        self.temp_files = [] 
-        
-        self.undo_stack = []
-        self.MAX_UNDO_STEPS = 5
+        self.text_tool_active = False 
+        self.edit_tool_active = False 
+        self.sign_tool_active = False
         
         self.scroll_area = QScrollArea()
-        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter) 
         
         self.image_label = PDFLabel(self) 
-        self.scroll_area.setWidget(self.image_label)
-        self.setCentralWidget(self.scroll_area)
+        self.image_label.setScaledContents(False) 
         
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 0, 0, 100))
-        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setOffset(0, 5)
         self.image_label.setGraphicsEffect(shadow)
-        self.image_label.hide() 
+        
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        self.scroll_area.setWidget(self.image_label)
+        self.setCentralWidget(self.scroll_area)
         
         toolbar = QToolBar("Main Toolbar")
-        toolbar.setMovable(False)
+        toolbar.setMovable(False) 
         self.addToolBar(toolbar)
         
-        open_action = toolbar.addAction("📂 Open")
+        open_action = toolbar.addAction("📂 Open PDF")
         open_action.triggered.connect(self.open_pdf)
+        
         toolbar.addSeparator()
         
-        prev_action = toolbar.addAction("⬅ Previous")
+        prev_action = toolbar.addAction("◀ Prev")
         prev_action.triggered.connect(self.prev_page)
         
-        next_action = toolbar.addAction("Next ➡")
+        self.page_label = QLabel(" Page 0 / 0 ")
+        self.page_label.setStyleSheet("color: white; font-weight: bold; margin: 0 10px;")
+        toolbar.addWidget(self.page_label)
+        
+        next_action = toolbar.addAction("Next ▶")
         next_action.triggered.connect(self.next_page)
+        
         toolbar.addSeparator()
         
-        zoom_in_action = toolbar.addAction("🔍 In")
-        zoom_in_action.triggered.connect(self.zoom_in)
-        
-        zoom_out_action = toolbar.addAction("🔎 Out")
-        zoom_out_action.triggered.connect(self.zoom_out)
-        toolbar.addSeparator()
-
-        self.undo_action = toolbar.addAction("↩ Undo")
-        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo) 
-        self.undo_action.triggered.connect(self.undo)
-        self.undo_action.setEnabled(False) 
-        toolbar.addSeparator()
-        
-        self.text_action = toolbar.addAction("📝 Text")
+        self.text_action = toolbar.addAction("📝 Add Text")
         self.text_action.setCheckable(True) 
         self.text_action.triggered.connect(self.toggle_text_tool)
         
-        self.sign_action = toolbar.addAction("✍ Sign")
+        self.edit_action = toolbar.addAction("✏️ Edit Text")
+        self.edit_action.setCheckable(True) 
+        self.edit_action.triggered.connect(self.toggle_edit_tool)
+
+        self.sign_action = toolbar.addAction("✍️ Sign")
         self.sign_action.setCheckable(True)
-        self.sign_action.triggered.connect(self.toggle_signature_tool)
-        toolbar.addSeparator()
-        
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
+        self.sign_action.triggered.connect(self.toggle_sign_tool)
+
+        empty_spacer = QWidget()
+        empty_spacer.setSizePolicy(empty_spacer.sizePolicy().Policy.Expanding, empty_spacer.sizePolicy().Policy.Preferred)
+        toolbar.addWidget(empty_spacer)
         
         save_action = toolbar.addAction("💾 Save As")
         save_action.triggered.connect(self.save_pdf)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.floating_elements:
-            self.apply_all_floating_elements()
-            self.show_page()
-        super().mousePressEvent(event)
         
     def open_pdf(self):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if file_name:
-            self.clear_floating_elements()
             self.doc = pymupdf.open(file_name)
             self.current_page = 0
-            self.zoom_factor = 1.0 
-            
-            self.undo_stack.clear()
-            self.undo_action.setEnabled(False)
-            
-            self.image_label.show()
             self.show_page()
             
     def show_page(self):
         if self.doc:
             page = self.doc[self.current_page]
-            
-            mat = pymupdf.Matrix(self.zoom_factor, self.zoom_factor)
-            pix = page.get_pixmap(matrix=mat)
-            
+            pix = page.get_pixmap()
             qimage = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
+            
             self.image_label.setPixmap(pixmap)
             self.image_label.resize(pixmap.width(), pixmap.height())
+            self.image_label.setMinimumSize(pixmap.width(), pixmap.height())
             
-            for el in self.floating_elements:
-                el.update_zoom(self.zoom_factor)
-                el.raise_() 
+            self.page_label.setText(f" Page {self.current_page + 1} / {len(self.doc)} ")
 
     def prev_page(self):
         if self.doc and self.current_page > 0:
-            self.apply_all_floating_elements() 
             self.current_page -= 1
             self.show_page()
 
     def next_page(self):
         if self.doc and self.current_page < len(self.doc) - 1:
-            self.apply_all_floating_elements() 
             self.current_page += 1
             self.show_page()
             
-    def zoom_in(self):
-        if self.doc:
-            self.zoom_factor *= 1.2 
-            self.show_page()
-
-    def zoom_out(self):
-        if self.doc:
-            self.zoom_factor /= 1.2
-            self.show_page()
-    
     def toggle_text_tool(self, checked):
-        if checked and self.signature_tool_active:
-            self.sign_action.setChecked(False)
-            self.signature_tool_active = False
-            
         self.text_tool_active = checked
         if checked:
+            self.edit_action.setChecked(False) 
+            self.sign_action.setChecked(False)
+            self.edit_tool_active = False
+            self.sign_tool_active = False
             self.image_label.setCursor(Qt.CursorShape.IBeamCursor)
         else:
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
-    def toggle_signature_tool(self, checked):
-        if checked and self.text_tool_active:
-            self.text_action.setChecked(False)
-            self.text_tool_active = False
-            
-        self.signature_tool_active = checked
+    def toggle_edit_tool(self, checked):
+        self.edit_tool_active = checked
         if checked:
-            if not self.signature_file_path:
-                dialog = SignaturePad(self)
-                if dialog.exec() == QDialog.DialogCode.Accepted and dialog.signature_file_path:
-                    self.signature_file_path = dialog.signature_file_path
-                    self.image_label.setCursor(Qt.CursorShape.CrossCursor)
-                else:
-                    self.sign_action.setChecked(False)
-                    self.signature_tool_active = False
-            else:
-                self.image_label.setCursor(Qt.CursorShape.CrossCursor)
+            self.text_action.setChecked(False) 
+            self.sign_action.setChecked(False)
+            self.text_tool_active = False
+            self.sign_tool_active = False
+            self.image_label.setCursor(Qt.CursorShape.CrossCursor)
         else:
             self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
-    def save_state_for_undo(self):
-        if self.doc:
-            current_state = self.doc.tobytes()
-            self.undo_stack.append(current_state)
-            
-            if len(self.undo_stack) > self.MAX_UNDO_STEPS:
-                self.undo_stack.pop(0)
-                
-            self.undo_action.setEnabled(True)
-
-    def undo(self):
-        if self.undo_stack:
-            last_state = self.undo_stack.pop()
-            
-            if self.doc:
-                self.doc.close()
-                
-            self.doc = pymupdf.open(stream=last_state, filetype="pdf")
-            self.show_page()
-            
-            if not self.undo_stack:
-                self.undo_action.setEnabled(False)
-
-    def commit_single_element(self, widget):
-        self.save_state_for_undo()
-        page = self.doc[self.current_page]
-        
-        if isinstance(widget, DraggableSignature):
-            rect = pymupdf.Rect(widget.pdf_x - 60, widget.pdf_y - 30, 
-                                widget.pdf_x + 60, widget.pdf_y + 30)
-            page.insert_image(rect, filename=widget.file_path)
-            
-        elif isinstance(widget, DraggableText):
-            # Baseline estimation (adds font size to Top-Left Y coordinate)
-            point = pymupdf.Point(widget.pdf_x, widget.pdf_y + widget.base_font_size)
-            page.insert_text(point, widget.text_content, fontsize=widget.base_font_size, color=(0, 0, 0), fontname="helv")
-        
-        if widget in self.floating_elements:
-            self.floating_elements.remove(widget)
-        widget.deleteLater()
-        
-        self.show_page()
-
-    def apply_all_floating_elements(self):
-        if not self.floating_elements:
-            return
-            
-        self.save_state_for_undo()
-        page = self.doc[self.current_page]
-        
-        for widget in self.floating_elements:
-            if isinstance(widget, DraggableSignature):
-                rect = pymupdf.Rect(widget.pdf_x - 60, widget.pdf_y - 30, 
-                                    widget.pdf_x + 60, widget.pdf_y + 30)
-                page.insert_image(rect, filename=widget.file_path)
-                
-            elif isinstance(widget, DraggableText):
-                point = pymupdf.Point(widget.pdf_x, widget.pdf_y + widget.base_font_size)
-                page.insert_text(point, widget.text_content, fontsize=widget.base_font_size, color=(0, 0, 0), fontname="helv")
-                
-            widget.deleteLater()
-            
-        self.floating_elements.clear()
-
-    def clear_floating_elements(self):
-        for el in self.floating_elements:
-            el.deleteLater()
-        self.floating_elements.clear()
+    def toggle_sign_tool(self, checked):
+        self.sign_tool_active = checked
+        if checked:
+            self.text_action.setChecked(False)
+            self.edit_action.setChecked(False)
+            self.text_tool_active = False
+            self.edit_tool_active = False
+            self.image_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
 
     def handle_click(self, x, y):
         if not self.doc:
             return
 
-        pdf_x = x / self.zoom_factor
-        pdf_y = y / self.zoom_factor
+        page = self.doc[self.current_page]
 
         if self.text_tool_active:
-            text, ok = QInputDialog.getText(self, "Input Text", "Enter text to insert:")
-            if ok and text:
-                # Spawn draggable text widget instead of burning instantly
-                text_widget = DraggableText(self.image_label, text, pdf_x, pdf_y, self)
-                self.floating_elements.append(text_widget)
+            dialog = AddTextDialog(self)
+            if dialog.exec(): 
+                text, font_size, font_name = dialog.get_data()
                 
-                self.text_action.setChecked(False)
-                self.text_tool_active = False
-                self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
+                font_map = {
+                    "Helvetica": "helv",
+                    "Times Roman": "tiro",
+                    "Courier": "cour"
+                }
+                pdf_font = font_map.get(font_name, "helv")
                 
-        elif self.signature_tool_active and self.signature_file_path:
-            sig_widget = DraggableSignature(self.image_label, self.signature_file_path, pdf_x, pdf_y, self)
-            self.floating_elements.append(sig_widget)
+                if text.strip():
+                    insertion_point = pymupdf.Point(x, y + font_size)
+                    page.insert_text(
+                        insertion_point, 
+                        text, 
+                        fontsize=font_size, 
+                        fontname=pdf_font,
+                        color=(0, 0, 0)
+                    )
+                    self.show_page()
             
+            self.text_action.setChecked(False)
+            self.toggle_text_tool(False)
+
+        elif self.edit_tool_active:
+            words = page.get_text("words")
+            clicked_word = None
+            word_rect = None
+            
+            tolerance = 2 
+            for w in words:
+                x0, y0, x1, y1, word_text = w[0], w[1], w[2], w[3], w[4]
+                if (x0 - tolerance <= x <= x1 + tolerance) and (y0 - tolerance <= y <= y1 + tolerance):
+                    clicked_word = word_text
+                    word_rect = pymupdf.Rect(x0, y0, x1, y1)
+                    break
+            
+            if clicked_word:
+                input_dialog = QInputDialog(self)
+                input_dialog.setStyleSheet(MODERN_STYLE)
+                input_dialog.setWindowTitle("Edit Text")
+                input_dialog.setLabelText("Edit word:")
+                input_dialog.setTextValue(clicked_word)
+                
+                if input_dialog.exec():
+                    new_text = input_dialog.textValue()
+                    if new_text:
+                        page.add_redact_annot(word_rect)
+                        page.apply_redactions() 
+                        approx_fontsize = word_rect.height * 0.75
+                        baseline = word_rect.y1 - (word_rect.height * 0.2)
+                        
+                        page.insert_text(pymupdf.Point(word_rect.x0, baseline), new_text, fontsize=approx_fontsize, color=(0, 0, 0))
+                        self.show_page()
+            else:
+                msg = QMessageBox(self)
+                msg.setStyleSheet(MODERN_STYLE)
+                msg.information(self, "No text found", "You didn't click on an editable word.")
+            
+            self.edit_action.setChecked(False)
+            self.toggle_edit_tool(False)
+
+        # --- UPDATED SIGNATURE MODE ---
+        elif self.sign_tool_active:
+            dialog = SignatureDialog(self)
+            
+            if dialog.exec():
+                # Retrieve the bytes from our new class variable
+                signature_bytes = dialog.final_signature_bytes
+                
+                if signature_bytes:
+                    img_width = 150
+                    img_height = 75
+                    rect = pymupdf.Rect(x, y - img_height, x + img_width, y)
+                    
+                    page.insert_image(rect, stream=signature_bytes)
+                    self.show_page()
+
             self.sign_action.setChecked(False)
-            self.signature_tool_active = False
-            self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
+            self.toggle_sign_tool(False)
 
     def save_pdf(self):
         if self.doc:
-            self.apply_all_floating_elements()
-            self.show_page()
-            
             file_name, _ = QFileDialog.getSaveFileName(self, "Save PDF", "", "PDF Files (*.pdf)")
             if file_name:
                 self.doc.save(file_name)
 
-    def closeEvent(self, event):
-        for temp_file in self.temp_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-            except OSError:
-                pass
-        event.accept()
-
-
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    app.setStyle("Fusion") 
     app.setStyleSheet(MODERN_STYLE)
+    
     window = PDFEditor()
     window.show()
     sys.exit(app.exec())
