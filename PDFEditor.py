@@ -134,12 +134,10 @@ class SignatureDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Sign Document")
         
-        # This will hold the final image bytes sent back to the main app
         self.final_signature_bytes = None
         
         layout = QVBoxLayout(self)
         
-        # --- NEW: Check for an existing saved signature ---
         if os.path.exists(SIGNATURE_FILE):
             self.load_btn = QPushButton("✅ Use Saved Signature")
             self.load_btn.setStyleSheet("background-color: #27ae60; color: white; padding: 10px; font-size: 14px;") 
@@ -158,7 +156,6 @@ class SignatureDialog(QDialog):
         self.pad = SignaturePad()
         layout.addWidget(self.pad)
         
-        # --- NEW: Checkbox to save the new signature ---
         self.save_checkbox = QCheckBox("Save this signature for future use")
         layout.addWidget(self.save_checkbox)
         
@@ -177,37 +174,38 @@ class SignatureDialog(QDialog):
         
         layout.addLayout(btn_layout)
 
-    # --- NEW: Handlers for processing the signature choice ---
     def use_saved_signature(self):
-        """Reads the signature from the local file and accepts the dialog."""
         with open(SIGNATURE_FILE, "rb") as f:
             self.final_signature_bytes = f.read()
         self.accept()
 
     def process_new_signature(self):
-        """Grabs the drawn signature, saves it if requested, and accepts the dialog."""
         self.final_signature_bytes = self.pad.get_image_bytes()
-        
         if self.save_checkbox.isChecked():
-            # Write the raw PNG bytes to a local file
             with open(SIGNATURE_FILE, "wb") as f:
                 f.write(self.final_signature_bytes)
-                
         self.accept()
 
 
+# --- UPGRADED: Dialog now supports loading external TTF/OTF files ---
 class AddTextDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Text")
         self.resize(350, 250)
+        
+        # Dictionary to store mapped custom fonts (DisplayName -> FilePath)
+        self.custom_fonts = {}
+        self.previous_font_index = 0
+        
         layout = QVBoxLayout(self)
         
         format_layout = QHBoxLayout()
         
         format_layout.addWidget(QLabel("Font:"))
         self.font_combo = QComboBox()
-        self.font_combo.addItems(["Helvetica", "Times Roman", "Courier"])
+        self.font_combo.addItems(["Helvetica", "Times Roman", "Courier", "📂 Select Custom Font..."])
+        self.font_combo.currentIndexChanged.connect(self.handle_font_selection)
         format_layout.addWidget(self.font_combo)
         
         format_layout.addWidget(QLabel("Size:"))
@@ -227,8 +225,41 @@ class AddTextDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
+    def handle_font_selection(self, index):
+        selected_text = self.font_combo.itemText(index)
+        
+        if selected_text == "📂 Select Custom Font...":
+            # Launch file browser to select a custom font
+            file_path, _ = QFileDialog.getOpenFileName(self, "Select Font File", "", "Font Files (*.ttf *.otf)")
+            
+            if file_path:
+                # Extract just the filename (e.g., 'Roboto-Bold.ttf')
+                font_name = os.path.basename(file_path)
+                
+                # Add to our tracking dict if it's new
+                if font_name not in self.custom_fonts:
+                    self.custom_fonts[font_name] = file_path
+                    # Insert the new font right above the "Select Custom Font..." option
+                    self.font_combo.insertItem(self.font_combo.count() - 1, font_name)
+                
+                # Switch the combobox to display the newly loaded font
+                new_index = self.font_combo.findText(font_name)
+                self.font_combo.setCurrentIndex(new_index)
+                self.previous_font_index = new_index
+            else:
+                # User cancelled the file dialog, quietly revert to the previous font
+                self.font_combo.blockSignals(True)
+                self.font_combo.setCurrentIndex(self.previous_font_index)
+                self.font_combo.blockSignals(False)
+        else:
+            # Standard font selected, just track the index
+            self.previous_font_index = index
+
     def get_data(self):
-        return self.text_edit.toPlainText(), self.font_spin.value(), self.font_combo.currentText()
+        font_display = self.font_combo.currentText()
+        custom_path = self.custom_fonts.get(font_display, None)
+        # We now return 4 values, including the file path (if it's custom)
+        return self.text_edit.toPlainText(), self.font_spin.value(), font_display, custom_path
 
 
 class PDFLabel(QLabel):
@@ -382,32 +413,58 @@ class PDFEditor(QMainWindow):
 
         page = self.doc[self.current_page]
 
+        # --- ADD TEXT MODE ---
         if self.text_tool_active:
             dialog = AddTextDialog(self)
             if dialog.exec(): 
-                text, font_size, font_name = dialog.get_data()
-                
-                font_map = {
-                    "Helvetica": "helv",
-                    "Times Roman": "tiro",
-                    "Courier": "cour"
-                }
-                pdf_font = font_map.get(font_name, "helv")
+                text, font_size, font_name, custom_path = dialog.get_data()
                 
                 if text.strip():
                     insertion_point = pymupdf.Point(x, y + font_size)
-                    page.insert_text(
-                        insertion_point, 
-                        text, 
-                        fontsize=font_size, 
-                        fontname=pdf_font,
-                        color=(0, 0, 0)
-                    )
-                    self.show_page()
+                    
+                    try:
+                        # If a custom TTF/OTF path was provided, use PyMuPDF's fontfile embedding
+                        if custom_path:
+                            # Generate a safe PDF internal name for the custom font based on its filename
+                            safe_internal_name = "F_" + "".join(filter(str.isalnum, font_name))[:8]
+                            
+                            page.insert_text(
+                                insertion_point, 
+                                text, 
+                                fontsize=font_size, 
+                                fontname=safe_internal_name, 
+                                fontfile=custom_path,  # This tells PyMuPDF to embed the TTF/OTF!
+                                color=(0, 0, 0)
+                            )
+                        
+                        # Otherwise, fall back to the standard built-in base fonts
+                        else:
+                            font_map = {
+                                "Helvetica": "helv",
+                                "Times Roman": "tiro",
+                                "Courier": "cour"
+                            }
+                            pdf_font = font_map.get(font_name, "helv")
+                            
+                            page.insert_text(
+                                insertion_point, 
+                                text, 
+                                fontsize=font_size, 
+                                fontname=pdf_font,
+                                color=(0, 0, 0)
+                            )
+                            
+                        self.show_page()
+                    
+                    except Exception as e:
+                        msg = QMessageBox(self)
+                        msg.setStyleSheet(MODERN_STYLE)
+                        msg.warning(self, "Font Error", f"Could not load this custom font.\nError: {str(e)}")
             
             self.text_action.setChecked(False)
             self.toggle_text_tool(False)
 
+        # --- EDIT TEXT MODE ---
         elif self.edit_tool_active:
             words = page.get_text("words")
             clicked_word = None
@@ -446,12 +503,11 @@ class PDFEditor(QMainWindow):
             self.edit_action.setChecked(False)
             self.toggle_edit_tool(False)
 
-        # --- UPDATED SIGNATURE MODE ---
+        # --- SIGNATURE MODE ---
         elif self.sign_tool_active:
             dialog = SignatureDialog(self)
             
             if dialog.exec():
-                # Retrieve the bytes from our new class variable
                 signature_bytes = dialog.final_signature_bytes
                 
                 if signature_bytes:
