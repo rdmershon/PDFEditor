@@ -74,7 +74,6 @@ class SignatureDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
-# --- UPGRADED: Add Text Dialog with Font Selection ---
 class AddTextDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,7 +81,6 @@ class AddTextDialog(QDialog):
         self.resize(300, 250)
         layout = QVBoxLayout(self)
         
-        # Top formatting row (Font & Size)
         format_layout = QHBoxLayout()
         
         format_layout.addWidget(QLabel("Font:"))
@@ -108,7 +106,6 @@ class AddTextDialog(QDialog):
         layout.addWidget(self.buttons)
 
     def get_data(self):
-        # Returns 3 values now: Text, Size, and Font Family Name
         return self.text_edit.toPlainText(), self.font_spin.value(), self.font_combo.currentText()
 
 
@@ -135,8 +132,18 @@ class PDFEditor(QMainWindow):
         self.edit_tool_active = False 
         self.sign_tool_active = False
         
+        # --- UPGRADED: Scroll Area Configuration ---
         self.scroll_area = QScrollArea()
         self.image_label = PDFLabel(self) 
+        
+        # Ensure the label can expand to the full size of the PDF image
+        self.image_label.setScaledContents(False) 
+        
+        # Force scrollbars to always be available if the content exceeds the window
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setWidgetResizable(True) # Allows the inner widget to resize
+        
         self.scroll_area.setWidget(self.image_label)
         self.setCentralWidget(self.scroll_area)
         
@@ -184,7 +191,9 @@ class PDFEditor(QMainWindow):
             qimage = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage)
             self.image_label.setPixmap(pixmap)
+            # Crucial for scrolling: update the label's size to match the new image exactly
             self.image_label.resize(pixmap.width(), pixmap.height())
+            self.image_label.setMinimumSize(pixmap.width(), pixmap.height())
 
     def prev_page(self):
         if self.doc and self.current_page > 0:
@@ -239,10 +248,8 @@ class PDFEditor(QMainWindow):
         if self.text_tool_active:
             dialog = AddTextDialog(self)
             if dialog.exec(): 
-                # Unpack the new font_name string
                 text, font_size, font_name = dialog.get_data()
                 
-                # Map the user's dropdown choice to PyMuPDF's internal font codes
                 font_map = {
                     "Helvetica": "helv",
                     "Times Roman": "tiro",
@@ -252,8 +259,6 @@ class PDFEditor(QMainWindow):
                 
                 if text.strip():
                     insertion_point = pymupdf.Point(x, y + font_size)
-                    
-                    # Insert using the newly mapped fontname
                     page.insert_text(
                         insertion_point, 
                         text, 
